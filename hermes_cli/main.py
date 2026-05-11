@@ -1152,6 +1152,82 @@ def _normalize_tui_toolsets(toolsets: object) -> list[str]:
         return [item for item in normalized if item]
 
 
+def _ensure_gateway_daemon() -> None:
+    """Auto-start the systemd gateway daemon if it's not running.
+
+    When the TUI or dashboard launches, it only starts its own local
+    Python backend (tui_gateway).  But the messaging gateway daemon
+    (Telegram, Discord, etc.) is a separate systemd service.  Without
+    this check, opening the GUI leaves those platforms offline until
+    someone manually runs ``hermes gateway start``.
+
+    This function probes the daemon status via ``systemctl --user is-active``
+    and starts it if inactive — so the GUI always brings the full
+    messaging stack online.
+    """
+    try:
+        from hermes_cli.gateway import (
+            get_service_name,
+            supports_systemd_services,
+            _select_systemd_scope,
+            _run_systemctl,
+            _ensure_user_systemd_env,
+        )
+    except ImportError:
+        return  # gateway module not available — nothing to do
+
+    if not supports_systemd_services():
+        return  # No systemd (macOS, Windows, container, etc.)
+
+    try:
+        _ensure_user_systemd_env()
+    except Exception:
+        pass
+
+    # Determine the correct systemctl scope (user vs system)
+    try:
+        system_scope = _select_systemd_scope(system=False)
+    except Exception:
+        system_scope = False
+
+    scope_cmd = ["systemctl", "--user"] if not system_scope else ["systemctl"]
+    svc_name = get_service_name() if "get_service_name" in dir() else "hermes-gateway"
+
+    # Check if the service unit exists at all
+    try:
+        unit_path_result = _run_systemctl(
+            ["is-active", svc_name],
+            system=system_scope,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        status = unit_path_result.stdout.strip()
+        if status == "active":
+            return  # Already running — nothing to do
+    except Exception:
+        # systemctl not responding — can't auto-start, don't block the GUI
+        return
+
+    # Service is not active — try to start it
+    try:
+        logger.info("Gateway daemon is not running — auto-starting via systemctl")
+        _run_systemctl(
+            ["start", svc_name],
+            system=system_scope,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        # Wait briefly for the daemon to come up (best-effort, don't block)
+        import time as _t
+        _t.sleep(1)
+    except Exception as exc:
+        # Log but don't raise — the GUI should still launch even if
+        # the daemon can't start (missing unit, permissions, etc.)
+        logger.debug("Could not auto-start gateway daemon: %s", exc)
+
+
 def _launch_tui(
     resume_session_id: Optional[str] = None,
     tui_dev: bool = False,
@@ -1170,6 +1246,8 @@ def _launch_tui(
     accept_hooks: bool = False,
 ):
     """Replace current process with the TUI."""
+    _ensure_gateway_daemon()
+
     tui_dir = PROJECT_ROOT / "ui-tui"
 
     import tempfile
@@ -9482,6 +9560,11 @@ def _report_dashboard_status() -> int:
 
 def cmd_dashboard(args):
     """Start the web UI server, or (with --stop/--status) manage running ones."""
+    # Auto-start the gateway daemon (Telegram, Discord, etc.) if not running.
+    # The dashboard relies on the daemon for platform connectivity.
+    if not getattr(args, "stop", False) and not getattr(args, "status", False):
+        _ensure_gateway_daemon()
+
     # --status: report running dashboards and exit, no deps needed.
     if getattr(args, "status", False):
         count = _report_dashboard_status()
