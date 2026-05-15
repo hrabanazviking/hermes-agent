@@ -1,4 +1,4 @@
-﻿# ============================================================================
+# ============================================================================
 # Hermes Agent Installer for Windows
 # ============================================================================
 # Installation script for Windows (PowerShell).
@@ -114,7 +114,7 @@ function Install-AgentBrowser {
             Write-Success "agent-browser installed"
             Remove-Item -Force $browserLog -ErrorAction SilentlyContinue
         } else {
-            Write-Warn "agent-browser npm install failed (exit $LASTEXITCODE) — see $browserLog"
+            Write-Warn "agent-browser npm install failed (exit $LASTEXITCODE) -- see $browserLog"
         }
 
         $npxExe = Resolve-NpxCmd -NpmExe $NpmExe
@@ -126,10 +126,10 @@ function Install-AgentBrowser {
                 Write-Success "Playwright Chromium installed"
                 Remove-Item -Force $pwLog -ErrorAction SilentlyContinue
             } else {
-                Write-Warn "Playwright Chromium install failed (exit $LASTEXITCODE) — see $pwLog"
+                Write-Warn "Playwright Chromium install failed (exit $LASTEXITCODE) -- see $pwLog"
             }
         } else {
-            Write-Warn "npx not found — skipping Playwright Chromium install."
+            Write-Warn "npx not found -- skipping Playwright Chromium install."
             Write-Info "Run manually: npx playwright install chromium"
         }
     } catch {
@@ -216,7 +216,7 @@ function Test-Python {
         }
     } catch { }
     
-    # Python not found — use uv to install it (no admin needed!)
+    # Python not found -- use uv to install it (no admin needed!)
     Write-Info "Python $PythonVersion not found, installing via uv..."
     try {
         # Temporarily relax ErrorActionPreference: uv writes download progress
@@ -224,7 +224,7 @@ function Test-Python {
         # stderr.  With $ErrorActionPreference = "Stop" (set at the top of this
         # script) PowerShell wraps stderr lines from native commands as
         # ErrorRecord objects when captured via 2>&1, then throws a terminating
-        # exception on the first one — even though uv exits 0 and Python was
+        # exception on the first one -- even though uv exits 0 and Python was
         # installed successfully.  Verify success via `uv python find`
         # afterwards, which is the reliable signal regardless of exit-code
         # semantics or stderr noise.  This fix was previously landed as
@@ -244,7 +244,7 @@ function Test-Python {
             return $true
         }
 
-        # uv ran but Python still not findable — show what happened
+        # uv ran but Python still not findable -- show what happened
         if ($uvExitCode -ne 0) {
             Write-Warn "uv python install output:"
             Write-Host $uvOutput -ForegroundColor DarkGray
@@ -269,7 +269,7 @@ function Test-Python {
         } catch { }
     }
 
-    # Fallback: try system python — but skip the Microsoft Store stub.
+    # Fallback: try system python -- but skip the Microsoft Store stub.
     # On Windows, %LOCALAPPDATA%\Microsoft\WindowsApps\python.exe is a 0-byte
     # reparse-point stub that prints "Python was not found; run without
     # arguments to install from the Microsoft Store..." to stdout and exits
@@ -318,17 +318,17 @@ function Install-Git {
     Ensure Git (and Git Bash) are installed.  Git for Windows bundles bash.exe
     which Hermes uses to run shell commands.
 
-    Priority order (deliberately simple — no winget, no registry, no system
+    Priority order (deliberately simple -- no winget, no registry, no system
     package manager):
-      1. Existing ``git`` on PATH — use it as-is (the common fast path).
+      1. Existing ``git`` on PATH -- use it as-is (the common fast path).
       2. Download **PortableGit** from the official git-for-windows GitHub
          release (self-extracting 7z.exe) and unpack it to
-         ``%LOCALAPPDATA%\hermes\git`` — never touches system Git, never
+         ``%LOCALAPPDATA%\hermes\git`` -- never touches system Git, never
          requires admin, works even on locked-down machines and machines
          with a broken system Git install.
 
     **Why PortableGit, not MinGit:**  MinGit is the minimal-automation
-    distribution and ships ONLY ``git.exe`` — no bash, no POSIX utilities.
+    distribution and ships ONLY ``git.exe`` -- no bash, no POSIX utilities.
     Hermes needs ``bash.exe`` to run shell commands.  PortableGit is the
     full Git for Windows distribution without the installer UI; it ships
     ``git.exe`` + ``bash.exe`` + ``sh``, ``awk``, ``sed``, ``grep``, ``curl``,
@@ -354,9 +354,9 @@ function Install-Git {
     }
 
     # Download PortableGit into $HermesHome\git.  Always works as long as
-    # we can reach github.com — no admin, no winget, no reliance on the
+    # we can reach github.com -- no admin, no winget, no reliance on the
     # user's possibly-broken system Git install.
-    Write-Info "Git not found — downloading PortableGit to $HermesHome\git\ ..."
+    Write-Info "Git not found -- downloading PortableGit to $HermesHome\git\ ..."
     Write-Info "(no admin rights required; isolated from any system Git install)"
 
     try {
@@ -368,7 +368,7 @@ function Install-Git {
                 "64-bit"
             }
         } else {
-            # PortableGit does not ship a 32-bit build — fall back to MinGit 32-bit
+            # PortableGit does not ship a 32-bit build -- fall back to MinGit 32-bit
             # with a warning that bash-based features will be unavailable.
             "32-bit-mingit"
         }
@@ -377,7 +377,7 @@ function Install-Git {
         $release = Invoke-RestMethod -Uri $releaseApi -UseBasicParsing -Headers @{ "User-Agent" = "hermes-installer" }
 
         if ($arch -eq "32-bit-mingit") {
-            Write-Warn "32-bit Windows detected — PortableGit is 64-bit only.  Installing MinGit 32-bit as a last resort; bash-dependent Hermes features (terminal tool, agent-browser) will not work on this machine."
+            Write-Warn "32-bit Windows detected -- PortableGit is 64-bit only.  Installing MinGit 32-bit as a last resort; bash-dependent Hermes features (terminal tool, agent-browser) will not work on this machine."
             $assetPattern = "MinGit-*-32-bit.zip"
             $downloadIsZip = $true
         } elseif ($arch -eq "arm64") {
@@ -502,7 +502,7 @@ function Set-GitBashEnvVar {
 
     # Standard system install locations as a final fallback.  Note:
     # ProgramFiles(x86) can't be referenced via ${env:...} string interpolation
-    # because of the parens — use [Environment]::GetEnvironmentVariable().
+    # because of the parens -- use [Environment]::GetEnvironmentVariable().
     $candidates += "${env:ProgramFiles}\Git\bin\bash.exe"
     $pf86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
     if ($pf86) { $candidates += "$pf86\Git\bin\bash.exe" }
@@ -517,7 +517,7 @@ function Set-GitBashEnvVar {
         }
     }
 
-    Write-Warn "Could not locate bash.exe — Hermes may not find Git Bash."
+    Write-Warn "Could not locate bash.exe -- Hermes may not find Git Bash."
     Write-Info "If needed, set HERMES_GIT_BASH_PATH manually to your bash.exe path."
 }
 
@@ -541,7 +541,7 @@ function Test-Node {
         return $true
     }
 
-    Write-Info "Node.js not found — installing Node.js $NodeVersion LTS..."
+    Write-Info "Node.js not found -- installing Node.js $NodeVersion LTS..."
 
     # Try winget first (cleanest on modern Windows)
     if (Get-Command winget -ErrorAction SilentlyContinue) {
@@ -731,7 +731,7 @@ function Install-Repository {
 
     if (Test-Path $InstallDir) {
         # Test-Path "$InstallDir\.git" returns True when .git is a file OR a
-        # directory OR a symlink OR a submodule-style gitfile — and also when
+        # directory OR a symlink OR a submodule-style gitfile -- and also when
         # it's a broken stub left over from a failed previous install (e.g.
         # a partial Remove-Item that couldn't delete a locked index.lock).
         # Validate the repo properly by asking git itself.  Two checks
@@ -778,7 +778,7 @@ function Install-Repository {
             # a partial uninstall used to lock the installer into the
             # "update" branch forever, emitting three ``fatal: not a git
             # repository`` errors and failing with "not in a git directory".
-            Write-Warn "Existing directory at $InstallDir is not a valid git repo — replacing it."
+            Write-Warn "Existing directory at $InstallDir is not a valid git repo -- replacing it."
             try {
                 Remove-Item -Recurse -Force $InstallDir -ErrorAction Stop
             } catch {
@@ -824,7 +824,7 @@ function Install-Repository {
         # Fallback: download ZIP archive (bypasses git file I/O issues entirely)
         if (-not $cloneSuccess) {
             if (Test-Path $InstallDir) { Remove-Item -Recurse -Force $InstallDir -ErrorAction SilentlyContinue }
-            Write-Warn "Git clone failed — downloading ZIP archive instead..."
+            Write-Warn "Git clone failed -- downloading ZIP archive instead..."
             try {
                 $zipUrl = "https://github.com/NousResearch/hermes-agent/archive/refs/heads/$Branch.zip"
                 $zipPath = "$env:TEMP\hermes-agent-$Branch.zip"
@@ -915,14 +915,14 @@ function Install-Dependencies {
         $env:VIRTUAL_ENV = "$InstallDir\venv"
     }
 
-    # Hash-verified install (Tier 0) — when uv.lock is present, prefer
+    # Hash-verified install (Tier 0) -- when uv.lock is present, prefer
     # `uv sync --locked`. The lockfile records SHA256 hashes for every
     # transitive dependency, so a compromised transitive (different hash
     # than what we shipped) is REJECTED by the resolver. This is the
     # *only* path that protects against the "direct dep is fine, but the
     # dep's dep got worm-poisoned overnight" failure mode. The
     # `uv pip install` tiers below re-resolve transitives fresh from PyPI
-    # without any hash verification — they exist to keep installs working
+    # without any hash verification -- they exist to keep installs working
     # when the lockfile is stale, missing, or out-of-sync with the
     # current extras spec, NOT because they're equivalent in posture.
     if (Test-Path "uv.lock") {
@@ -937,7 +937,7 @@ function Install-Dependencies {
         #
         # UV_PROJECT_ENVIRONMENT pins the sync target to our venv\.
         # Without it, modern uv (>=0.5) ignores VIRTUAL_ENV for `sync`
-        # and creates a sibling .venv\ inside the repo — leaving venv\
+        # and creates a sibling .venv\ inside the repo -- leaving venv\
         # empty and producing the broken state where `hermes.exe` exists
         # in the wrong directory and imports fail with ModuleNotFoundError.
         # (Mirrors the same flag in scripts/install.sh::install_deps.)
@@ -946,7 +946,7 @@ function Install-Dependencies {
         if ($LASTEXITCODE -eq 0) {
             Write-Success "Main package installed (hash-verified via uv.lock)"
             $script:InstalledTier = "hash-verified (uv.lock)"
-            # Skip the rest of the tiered cascade — we already have a
+            # Skip the rest of the tiered cascade -- we already have a
             # complete, hash-verified install.
             $skipPipFallback = $true
         } else {
@@ -954,22 +954,22 @@ function Install-Dependencies {
             $skipPipFallback = $false
         }
     } else {
-        Write-Info "uv.lock not found — falling back to PyPI resolve (no hash verification)"
+        Write-Info "uv.lock not found -- falling back to PyPI resolve (no hash verification)"
         $skipPipFallback = $false
     }
 
     # Install main package.  Tiered fallback so a single flaky transitive
     # doesn't silently drop everything.  Each tier's stdout/stderr is
-    # preserved — no Out-Null swallowing — so the user can see what failed.
+    # preserved -- no Out-Null swallowing -- so the user can see what failed.
     #
-    # Tier 1: [all] — the curated extra in pyproject.toml.
+    # Tier 1: [all] -- the curated extra in pyproject.toml.
     # Tier 2: [all] minus the currently-broken extras list ($brokenExtras).
     #         Edit $brokenExtras below when something on PyPI breaks; this
     #         lets users keep the rest of [all] when one transitive is
     #         unavailable. The list of [all]'s contents is parsed from
-    #         pyproject.toml at runtime — there is NO hand-mirrored copy
+    #         pyproject.toml at runtime -- there is NO hand-mirrored copy
     #         to drift out of sync.
-    # Tier 3: bare `.` — last-resort so at least the core CLI launches.
+    # Tier 3: bare `.` -- last-resort so at least the core CLI launches.
 
     # Currently-broken extras. Edit this list when an upstream package
     # gets quarantined / yanked / breaks resolution. Empty means everything
@@ -1047,7 +1047,7 @@ except Exception:
         if ($LASTEXITCODE -ne 0) {
             $sibling = "$InstallDir\.venv"
             $hint = if (Test-Path $sibling) {
-                "Detected sibling .venv\ at $sibling — uv synced there instead of venv\. Recover with: cd '$InstallDir'; Remove-Item -Recurse -Force venv; Move-Item .venv venv"
+                "Detected sibling .venv\ at $sibling -- uv synced there instead of venv\. Recover with: cd '$InstallDir'; Remove-Item -Recurse -Force venv; Move-Item .venv venv"
             } else {
                 "Recover with: cd '$InstallDir'; `$env:UV_PROJECT_ENVIRONMENT='$InstallDir\venv'; uv sync --extra all --locked"
             }
@@ -1056,7 +1056,7 @@ except Exception:
         Write-Success "Baseline imports verified in venv"
     }
 
-    # Verify the dashboard deps specifically — they're the most common thing
+    # Verify the dashboard deps specifically -- they're the most common thing
     # users hit and lazy-import errors from `hermes dashboard` are confusing.
     # If tier 1 failed (the common case), [web] was still picked up by tiers
     # 2-3; only tier 4 leaves you without it.
@@ -1068,7 +1068,7 @@ except Exception:
             if ($LASTEXITCODE -eq 0) { $webOk = $true }
         } catch { }
         if (-not $webOk) {
-            Write-Warn "fastapi/uvicorn not importable — `hermes dashboard` will not work."
+            Write-Warn "fastapi/uvicorn not importable -- `hermes dashboard` will not work."
             Write-Info "Attempting targeted install of [web] extra as last resort..."
             & $UvCmd pip install -e ".[web]"
             if ($LASTEXITCODE -eq 0) {
@@ -1173,7 +1173,7 @@ function Copy-ConfigTemplates {
     # flags the BOM as an invisible unicode character and refuses to
     # load the file.  PS7's ``-Encoding utf8NoBOM`` fixes that but we
     # don't control which PowerShell version the user has.  Go direct
-    # to .NET with an explicit UTF8Encoding($false) — BOM-free on every
+    # to .NET with an explicit UTF8Encoding($false) -- BOM-free on every
     # PowerShell version.
     $soulPath = "$HermesHome\SOUL.md"
     if (-not (Test-Path $soulPath)) {
@@ -1229,7 +1229,7 @@ function Install-NodeDeps {
     # Resolve npm explicitly to npm.cmd, NOT npm.ps1.  Node.js on Windows
     # ships BOTH npm.cmd (a batch shim) and npm.ps1 (a PowerShell shim).
     # Get-Command's default ordering picks whichever comes first in PATHEXT,
-    # and on many systems that's .ps1 — but .ps1 requires scripts to be
+    # and on many systems that's .ps1 -- but .ps1 requires scripts to be
     # enabled in PowerShell's execution policy, which most Windows users
     # don't have (the Restricted / RemoteSigned default blocks unsigned
     # .ps1 files).  .cmd has no such restriction and works on every box.
@@ -1239,7 +1239,7 @@ function Install-NodeDeps {
     # returned if we can't find a .cmd sibling.
     $npmExe = Resolve-NpmCmd
     if (-not $npmExe) {
-        Write-Warn "npm not found on PATH — skipping Node.js dependencies."
+        Write-Warn "npm not found on PATH -- skipping Node.js dependencies."
         Write-Info "Open a new PowerShell window and re-run 'hermes setup tools' later."
         return
     }
@@ -1249,7 +1249,7 @@ function Install-NodeDeps {
     if ($npmRaw -and $npmRaw -like "*.ps1" -and $npmExe -ne $npmRaw) {
         Write-Info "Using npm.cmd (PowerShell execution policy blocks npm.ps1)"
     } elseif ($npmRaw -and $npmRaw -like "*.ps1" -and $npmExe -eq $npmRaw) {
-        Write-Warn "Only npm.ps1 available — install may fail if script execution is disabled."
+        Write-Warn "Only npm.ps1 available -- install may fail if script execution is disabled."
         Write-Info "  If it fails, either enable PS script execution or install Node via winget."
     }
 
@@ -1275,7 +1275,7 @@ function Install-NodeDeps {
                 Remove-Item -Force $logPath -ErrorAction SilentlyContinue
                 return $true
             }
-            Write-Warn "$label npm install failed — exit code $code"
+            Write-Warn "$label npm install failed -- exit code $code"
             if (Test-Path $logPath) {
                 $errText = (Get-Content $logPath -Raw -ErrorAction SilentlyContinue)
                 if ($errText) {
@@ -1308,14 +1308,14 @@ function Install-NodeDeps {
         # returns False (no Chromium under %LOCALAPPDATA%\ms-playwright), and the
         # browser_* tools are silently filtered out of the agent's tool schema.
         # System Chrome at "C:\Program Files\Google\Chrome\..." is NOT used by
-        # agent-browser — it expects a Playwright-managed Chromium.
+        # agent-browser -- it expects a Playwright-managed Chromium.
         if ($browserNpmOk) {
             Write-Info "Installing browser engine (Playwright Chromium)..."
             # npx lives next to npm in the same bin dir.  Prefer .cmd to dodge
             # the same execution-policy gotcha that affects npm.ps1 (see above).
             $npxExe = Resolve-NpxCmd -NpmExe $npmExe
             if (-not $npxExe) {
-                Write-Warn "npx not found — cannot install Playwright Chromium."
+                Write-Warn "npx not found -- cannot install Playwright Chromium."
                 Write-Info "Run manually later: cd `"$InstallDir`"; npx playwright install chromium"
             } else {
                 $pwLog = "$env:TEMP\hermes-playwright-install-$(Get-Random).log"
@@ -1327,7 +1327,7 @@ function Install-NodeDeps {
                         Write-Success "Playwright Chromium installed (browser tools ready)"
                         Remove-Item -Force $pwLog -ErrorAction SilentlyContinue
                     } else {
-                        Write-Warn "Playwright Chromium install failed — exit code $pwCode"
+                        Write-Warn "Playwright Chromium install failed -- exit code $pwCode"
                         Write-Warn "Browser tools will not work until Chromium is installed."
                         if (Test-Path $pwLog) {
                             $pwErr = Get-Content $pwLog -Raw -ErrorAction SilentlyContinue
@@ -1370,7 +1370,7 @@ function Install-PlatformSdks {
     #    which silently skips some messaging SDKs from [messaging].
     # 2. `uv` creates the venv without pip.  If a messaging SDK ends up
     #    missing, the user can't `pip install python-telegram-bot` to
-    #    recover — pip simply isn't in their venv.
+    #    recover -- pip simply isn't in their venv.
     #
     # Strategy: bootstrap pip via `python -m ensurepip` (idempotent), then
     # for each token set in .env, verify the matching SDK imports.  If not,
@@ -1450,7 +1450,7 @@ function Install-PlatformSdks {
             Write-Info "Bootstrapping pip into venv (uv doesn't ship pip)..."
             & $pythonExe -m ensurepip --upgrade 2>&1 | Out-Null
             if ($LASTEXITCODE -ne 0) {
-                Write-Warn "ensurepip failed — can't auto-install missing SDKs."
+                Write-Warn "ensurepip failed -- can't auto-install missing SDKs."
                 Write-Info "Manual recovery: $UvCmd pip install `"$($missing[0].Spec)`""
                 return
             }
@@ -1629,7 +1629,7 @@ function Invoke-EnsureMode {
                 if ($script:HasNode) {
                     $npmExe = Resolve-NpmCmd
                     if (-not $npmExe) {
-                        Write-Warn "npm not found — cannot install browser deps."
+                        Write-Warn "npm not found -- cannot install browser deps."
                         break
                     }
 
@@ -1655,7 +1655,7 @@ function Invoke-EnsureMode {
                 }
             }
             default {
-                Write-Warn "Unknown dep '$dep' — skipping. Known deps: node, browser, ripgrep, ffmpeg"
+                Write-Warn "Unknown dep '$dep' -- skipping. Known deps: node, browser, ripgrep, ffmpeg"
             }
         }
     }
@@ -1672,7 +1672,7 @@ function Invoke-PostInstallMode {
         if ($npmExe) {
             Install-AgentBrowser -BrowserDir "$HermesHome\agent-browser" -NpmExe $npmExe -LogPrefix "postinstall"
         } else {
-            Write-Warn "npm not found — skipping Playwright Chromium install."
+            Write-Warn "npm not found -- skipping Playwright Chromium install."
         }
     }
 
@@ -1699,7 +1699,7 @@ function Main {
     Write-Banner
 
     # Windows refuses to delete a directory any shell is currently cd'd
-    # inside — and silently leaves orphan files behind, which then wedge
+    # inside -- and silently leaves orphan files behind, which then wedge
     # "is this a valid git repo" probes on re-install.  If the current
     # working dir is under $InstallDir, step out to the user's home
     # BEFORE doing anything else.  Harmless when the user ran the
@@ -1716,9 +1716,9 @@ function Main {
         }
     } catch {}
 
-    if (-not (Install-Uv)) { throw "uv installation failed — cannot continue" }
-    if (-not (Test-Python)) { throw "Python $PythonVersion not available — cannot continue" }
-    if (-not (Install-Git)) { throw "Git not available and auto-install failed — install from https://git-scm.com/download/win then re-run" }
+    if (-not (Install-Uv)) { throw "uv installation failed -- cannot continue" }
+    if (-not (Test-Python)) { throw "Python $PythonVersion not available -- cannot continue" }
+    if (-not (Install-Git)) { throw "Git not available and auto-install failed -- install from https://git-scm.com/download/win then re-run" }
     # Test-Node always returns $true (sets $script:HasNode on success, emits a
     # warning on failure and continues so non-browser installs still work).
     # Cast to [void] so the bare return value doesn't print "True" to the
