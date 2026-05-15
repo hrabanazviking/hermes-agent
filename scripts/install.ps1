@@ -94,6 +94,51 @@ function Resolve-NpxCmd {
     return $null
 }
 
+function Install-AgentBrowser {
+    param([string]$BrowserDir, [string]$NpmExe, [string]$LogPrefix)
+
+    if (-not (Test-Path $BrowserDir)) {
+        New-Item -ItemType Directory -Force -Path $BrowserDir | Out-Null
+    }
+    $pkgJson = "$BrowserDir\package.json"
+    if (-not (Test-Path $pkgJson)) {
+        '{"name":"hermes-browser-deps","version":"1.0.0","dependencies":{"agent-browser":"*"}}' | Out-File -FilePath $pkgJson -Encoding utf8 -NoNewline
+    }
+
+    Write-Info "Installing agent-browser to $BrowserDir..."
+    $browserLog = "$env:TEMP\hermes-$LogPrefix-browser-$(Get-Random).log"
+    Push-Location $BrowserDir
+    try {
+        & $NpmExe install --silent *> $browserLog
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "agent-browser installed"
+            Remove-Item -Force $browserLog -ErrorAction SilentlyContinue
+        } else {
+            Write-Warn "agent-browser npm install failed (exit $LASTEXITCODE) — see $browserLog"
+        }
+
+        $npxExe = Resolve-NpxCmd -NpmExe $NpmExe
+        if ($npxExe) {
+            Write-Info "Installing Playwright Chromium..."
+            $pwLog = "$env:TEMP\hermes-$LogPrefix-playwright-$(Get-Random).log"
+            & $npxExe playwright install chromium *> $pwLog
+            if ($LASTEXITCODE -eq 0) {
+                Write-Success "Playwright Chromium installed"
+                Remove-Item -Force $pwLog -ErrorAction SilentlyContinue
+            } else {
+                Write-Warn "Playwright Chromium install failed (exit $LASTEXITCODE) — see $pwLog"
+            }
+        } else {
+            Write-Warn "npx not found — skipping Playwright Chromium install."
+            Write-Info "Run manually: npx playwright install chromium"
+        }
+    } catch {
+        Write-Warn "browser install error: $_"
+    } finally {
+        Pop-Location
+    }
+}
+
 # ============================================================================
 # Dependency checks
 # ============================================================================
@@ -1588,51 +1633,7 @@ function Invoke-EnsureMode {
                         break
                     }
 
-                    # Install agent-browser package and Playwright Chromium
-                    # under a single Push-Location to avoid location-stack leaks
-                    # when npm install throws.
-                    $browserPkgDir = "$HermesHome\agent-browser"
-                    if (-not (Test-Path $browserPkgDir)) {
-                        New-Item -ItemType Directory -Force -Path $browserPkgDir | Out-Null
-                    }
-                    $pkgJson = "$browserPkgDir\package.json"
-                    if (-not (Test-Path $pkgJson)) {
-                        '{"name":"hermes-browser-ensure","version":"1.0.0","dependencies":{"agent-browser":"*"}}' | Out-File -FilePath $pkgJson -Encoding utf8 -NoNewline
-                    }
-
-                    Push-Location $browserPkgDir
-                    try {
-                        Write-Info "Installing agent-browser to $browserPkgDir..."
-                        $browserLog = "$env:TEMP\hermes-ensure-browser-$(Get-Random).log"
-                        & $npmExe install --silent *> $browserLog
-                        if ($LASTEXITCODE -eq 0) {
-                            Write-Success "agent-browser installed"
-                            Remove-Item -Force $browserLog -ErrorAction SilentlyContinue
-                        } else {
-                            Write-Warn "agent-browser npm install failed (exit $LASTEXITCODE) — see $browserLog"
-                        }
-
-                        # Install Playwright Chromium via npx
-                        $npxExe = Resolve-NpxCmd -NpmExe $npmExe
-                        if (-not $npxExe) {
-                            Write-Warn "npx not found — cannot install Playwright Chromium."
-                            Write-Info "Run manually: npx playwright install chromium"
-                        } else {
-                            Write-Info "Installing Playwright Chromium..."
-                            $pwLog = "$env:TEMP\hermes-ensure-playwright-$(Get-Random).log"
-                            & $npxExe playwright install chromium *> $pwLog
-                            if ($LASTEXITCODE -eq 0) {
-                                Write-Success "Playwright Chromium installed"
-                                Remove-Item -Force $pwLog -ErrorAction SilentlyContinue
-                            } else {
-                                Write-Warn "Playwright Chromium install failed (exit $LASTEXITCODE) — see $pwLog"
-                            }
-                        }
-                    } catch {
-                        Write-Warn "browser install error: $_"
-                    } finally {
-                        Pop-Location
-                    }
+                    Install-AgentBrowser -BrowserDir "$HermesHome\agent-browser" -NpmExe $npmExe -LogPrefix "ensure"
                 }
             }
             "ripgrep" {
@@ -1669,54 +1670,7 @@ function Invoke-PostInstallMode {
     if ($script:HasNode) {
         $npmExe = Resolve-NpmCmd
         if ($npmExe) {
-            # Install agent-browser so Playwright is resolvable via npx
-            $browserPkgDir = "$HermesHome\agent-browser"
-            if (-not (Test-Path $browserPkgDir)) {
-                New-Item -ItemType Directory -Force -Path $browserPkgDir | Out-Null
-            }
-            $pkgJson = "$browserPkgDir\package.json"
-            if (-not (Test-Path $pkgJson)) {
-                '{"name":"hermes-browser-postinstall","version":"1.0.0","dependencies":{"agent-browser":"*"}}' | Out-File -FilePath $pkgJson -Encoding utf8 -NoNewline
-            }
-            Write-Info "Installing agent-browser to $browserPkgDir..."
-            $browserLog = "$env:TEMP\hermes-postinstall-browser-$(Get-Random).log"
-            Push-Location $browserPkgDir
-            try {
-                & $npmExe install --silent *> $browserLog
-                if ($LASTEXITCODE -eq 0) {
-                    Write-Success "agent-browser installed"
-                    Remove-Item -Force $browserLog -ErrorAction SilentlyContinue
-                } else {
-                    Write-Warn "agent-browser npm install failed (exit $LASTEXITCODE) — see $browserLog"
-                }
-            } catch {
-                Write-Warn "agent-browser install error: $_"
-            } finally {
-                Pop-Location
-            }
-
-            $npxExe = Resolve-NpxCmd -NpmExe $npmExe
-            if ($npxExe) {
-                Write-Info "Installing Playwright Chromium..."
-                $pwLog = "$env:TEMP\hermes-postinstall-playwright-$(Get-Random).log"
-                Push-Location $browserPkgDir
-                try {
-                    & $npxExe playwright install chromium *> $pwLog
-                    if ($LASTEXITCODE -eq 0) {
-                        Write-Success "Playwright Chromium installed"
-                        Remove-Item -Force $pwLog -ErrorAction SilentlyContinue
-                    } else {
-                        Write-Warn "Playwright Chromium install failed (exit $LASTEXITCODE) — see $pwLog"
-                    }
-                } catch {
-                    Write-Warn "Playwright Chromium install error: $_"
-                } finally {
-                    Pop-Location
-                }
-            } else {
-                Write-Warn "npx not found — skipping Playwright Chromium install."
-                Write-Info "Run manually: npx playwright install chromium"
-            }
+            Install-AgentBrowser -BrowserDir "$HermesHome\agent-browser" -NpmExe $npmExe -LogPrefix "postinstall"
         } else {
             Write-Warn "npm not found — skipping Playwright Chromium install."
         }
