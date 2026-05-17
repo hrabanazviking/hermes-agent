@@ -67,8 +67,8 @@ def _get_rss_mb() -> Optional[int]:
             return int(maxrss / _BYTES_TO_MB)
         # Linux / other unices: KB
         return int(maxrss / 1024)
-    except Exception:
-        pass
+    except Exception as _res_err:
+        logger.debug("resource.getrusage failed, falling back to psutil: %s", _res_err)
 
     # Fallback: psutil (Windows, or unusual unix without resource).
     try:
@@ -76,7 +76,7 @@ def _get_rss_mb() -> Optional[int]:
 
         rss = psutil.Process(os.getpid()).memory_info().rss
         return int(rss / _BYTES_TO_MB)
-    except Exception:
+    except Exception as _psutil_err:
         return None
 
 
@@ -207,8 +207,8 @@ def stop_memory_monitoring(timeout: float = 2.0) -> None:
         # Final snapshot before teardown so "last RSS" is always in the log.
         try:
             log_memory_usage(prefix="shutdown")
-        except Exception:
-            pass
+        except Exception as _log_err:
+            logger.debug("Final memory log failed during shutdown: %s", _log_err)
 
         _stop_event.set()
         thread = _monitor_thread
@@ -218,8 +218,8 @@ def stop_memory_monitoring(timeout: float = 2.0) -> None:
     # Join outside the lock so a stuck log call can't deadlock shutdown.
     try:
         thread.join(timeout=timeout)
-    except Exception:
-        pass
+    except Exception as _join_err:
+        logger.debug("Memory monitor thread join failed: %s", _join_err)
 
     logger.info("[MEMORY] Periodic memory monitoring stopped")
 

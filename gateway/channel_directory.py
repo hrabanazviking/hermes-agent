@@ -93,8 +93,10 @@ async def build_channel_directory(adapters: Dict[Any, Any]) -> Dict[str, Any]:
         for entry in platform_registry.plugin_entries():
             if entry.name not in _SKIP_SESSION_DISCOVERY and entry.name not in platforms:
                 platforms[entry.name] = _build_from_sessions(entry.name)
-    except Exception:
-        pass
+    except Exception as _plugin_err:
+        logger.debug(
+            "Plugin platform entry scan skipped (non-critical): %s", _plugin_err,
+        )
 
     directory = {
         "updated_at": datetime.now().isoformat(),

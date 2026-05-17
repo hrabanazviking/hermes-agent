@@ -1008,8 +1008,8 @@ def _resolve_hermes_bin() -> Optional[list[str]]:
 
         if importlib.util.find_spec("hermes_cli") is not None:
             return [sys.executable, "-m", "hermes_cli.main"]
-    except Exception:
-        pass
+    except Exception as _import_err:
+        logger.debug("hermes_cli import check failed: %s", _import_err)
 
     return None
 
@@ -16380,8 +16380,11 @@ class GatewayRunner:
                                 _bg_result = _bg_cb()
                                 if inspect.isawaitable(_bg_result):
                                     await _bg_result
-                            except Exception:
-                                pass
+                            except Exception as _cb_err:
+                                logger.warning(
+                                    "Post-delivery callback failed for session %s on %s: %s",
+                                    session_key, getattr(adapter, 'platform_id', 'unknown'), _cb_err,
+                                )
                     elif adapter and hasattr(adapter, "_post_delivery_callbacks"):
                         _bg_cb = adapter._post_delivery_callbacks.pop(session_key, None)
                         if callable(_bg_cb):
@@ -16389,8 +16392,11 @@ class GatewayRunner:
                                 _bg_result = _bg_cb()
                                 if inspect.isawaitable(_bg_result):
                                     await _bg_result
-                            except Exception:
-                                pass
+                            except Exception as _cb_err2:
+                                logger.warning(
+                                    "Post-delivery callback failed for session %s on %s: %s",
+                                    session_key, getattr(adapter, 'platform_id', 'unknown'), _cb_err2,
+                                )
                 # else: interrupted — discard the interrupted response ("Operation
                 # interrupted." is just noise; the user already knows they sent a
                 # new message).
@@ -16546,16 +16552,21 @@ class GatewayRunner:
                             await _adapter_snapshot.delete_message(
                                 _chat_id_snapshot, _mid
                             )
-                        except Exception:
-                            pass
+                        except Exception as _del_err:
+                            logger.debug(
+                                "Temp bubble %s deletion skipped (non-critical): %s",
+                                _mid, _del_err,
+                            )
                 try:
                     safe_schedule_threadsafe(
                         _delete_all(), _loop_snapshot,
                         logger=logger,
                         log_message="Temp bubble cleanup scheduling error",
                     )
-                except Exception:
-                    pass
+                except Exception as _sched_err:
+                    logger.warning(
+                        "Temp bubble cleanup scheduling failed: %s", _sched_err,
+                    )
 
             try:
                 _cleanup_adapter.register_post_delivery_callback(
@@ -16845,6 +16856,15 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
             logging.getLogger().setLevel(_stderr_level)
 
     runner = GatewayRunner(config)
+
+    # ── Phase 1: Recovery Engine ──────────────────────────────────────
+    # Wire centralised error intelligence so @classified / safe() work
+    # and bare except:pass blocks are now audited and logged.
+    from gateway.recovery_engine import RecoveryEngine
+    from gateway.decorators import set_recovery_engine
+
+    recovery_engine = RecoveryEngine()
+    set_recovery_engine(recovery_engine)
     
     # Track whether an unexpected signal initiated the shutdown. When an
     # unexpected SIGTERM kills the gateway, we exit non-zero so service

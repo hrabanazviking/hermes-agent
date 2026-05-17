@@ -167,8 +167,8 @@ class Platform(Enum):
                 cls._value2member_map_[value] = pseudo
                 cls._member_map_[pseudo._name_] = pseudo
                 return pseudo
-        except Exception:
-            pass
+        except Exception as _enum_err:
+            logger.debug("Dynamic enum member creation failed for %s: %s", value, _enum_err)
 
         return None
 
@@ -189,8 +189,8 @@ class Platform(Enum):
                         )
                     ):
                         names.add(child.name.lower())
-        except Exception:
-            pass
+        except Exception as _scan_err:
+            logger.debug("Bundled plugin platform scan failed: %s", _scan_err)
         return names
 
 
