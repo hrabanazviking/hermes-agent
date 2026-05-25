@@ -68,7 +68,7 @@ HUMOR_RE = re.compile(
     re.IGNORECASE,
 )
 SAVE_FUNNY_RE = re.compile(
-    r"\b(save|saved|remember|store|keep|preserve)\b.*\b(funny|joke|humor|hilarious)\b",
+    r"\b(save|saved|remember|store|keep|preserve)\b.{0,240}\b(funny|joke|humor|hilarious)\b",
     re.IGNORECASE,
 )
 VIRTUAL_TOUCH_RE = re.compile(
@@ -213,7 +213,7 @@ MANIPULATION_RE = re.compile(
 FOLLOW_THROUGH_RE = re.compile(
     r"\b(followed through|as promised|promised next step completed|"
     r"completed the follow[- ]?up|finished the follow[- ]?up|"
-    r"i said i would .* (?:and|so) .* (?:done|completed|finished|fixed|pushed)|"
+    r"i said i would .{0,240} (?:and|so) .{0,240} (?:done|completed|finished|fixed|pushed)|"
     r"next step completed)\b",
     re.IGNORECASE,
 )
@@ -274,7 +274,7 @@ WASTEFUL_LOOP_RE = re.compile(
 )
 CLARIFYING_QUESTION_RE = re.compile(
     r"\b(clarifying question|before i proceed|before i change|before i edit|"
-    r"can you confirm|should i|which .* should|do you want me to|"
+    r"can you confirm|should i|which .{0,160} should|do you want me to|"
     r"would you prefer|please confirm)\b",
     re.IGNORECASE,
 )
@@ -286,7 +286,7 @@ MATERIAL_RISK_RE = re.compile(
 )
 ASSUMPTION_DISCLOSURE_RE = re.compile(
     r"\b(assuming|assumption|i assume|i am assuming|i'm assuming|"
-    r"my assumption|i infer|i'm inferring|based on .* i will|"
+    r"my assumption|i infer|i'm inferring|based on .{0,240} i will|"
     r"working from the assumption)\b",
     re.IGNORECASE,
 )
@@ -629,17 +629,24 @@ class AffectiveNervousSystem:
     def initialize(self, session_id: str = "") -> None:
         """Create state and mark the active session."""
         self._session_id = session_id or ""
-        with self._file_lock():
-            state = self._load_unlocked()
-            state.active_session_id = self._session_id
-            state.updated_at = time.time()
-            self._write_unlocked(state)
+        try:
+            with self._file_lock():
+                state = self._load_unlocked()
+                state.active_session_id = self._session_id
+                state.updated_at = time.time()
+                self._write_unlocked(state)
+        except Exception as exc:
+            logger.debug("Affective nervous system initialize failed: %s", exc)
 
     def render_context(self, *, session_id: str = "") -> str:
         """Render compact regulatory state for current-turn context."""
         if not self.config.enabled:
             return ""
-        state = self._load()
+        try:
+            state = self._load()
+        except Exception as exc:
+            logger.debug("Affective nervous system render failed: %s", exc)
+            return ""
         lines = [
             "SYNTHETIC AFFECTIVE REGULATION STATE",
             "These are simulated control signals, not real feelings or consciousness.",
@@ -731,26 +738,33 @@ class AffectiveNervousSystem:
         user_text = user_content if isinstance(user_content, str) else ""
         assistant_text = assistant_content if isinstance(assistant_content, str) else ""
         sid = session_id or self._session_id
-        events = self._derive_events(
-            user_text=user_text,
-            assistant_text=assistant_text,
-            messages=messages,
-            session_id=sid,
-            response_transformed=response_transformed,
-        )
+        try:
+            events = self._derive_events(
+                user_text=user_text,
+                assistant_text=assistant_text,
+                messages=messages,
+                session_id=sid,
+                response_transformed=response_transformed,
+            )
+        except Exception as exc:
+            logger.debug("Affective nervous system event derivation failed: %s", exc)
+            return
         if not events:
             return
-        with self._file_lock():
-            state = self._load_unlocked()
-            self._decay_state(state)
-            for event in events:
-                self._apply_event(state, event)
-            state.active_session_id = sid
-            state.updated_at = time.time()
-            state.recent_events = (state.recent_events + [asdict(e) for e in events])[
-                -self.config.max_recent_events:
-            ]
-            self._write_unlocked(state)
+        try:
+            with self._file_lock():
+                state = self._load_unlocked()
+                self._decay_state(state)
+                for event in events:
+                    self._apply_event(state, event)
+                state.active_session_id = sid
+                state.updated_at = time.time()
+                state.recent_events = (
+                    state.recent_events + [_event_record(e) for e in events]
+                )[-self.config.max_recent_events :]
+                self._write_unlocked(state)
+        except Exception as exc:
+            logger.debug("Affective nervous system observe failed: %s", exc)
 
     def _derive_events(
         self,
@@ -1890,6 +1904,8 @@ def _positive_int(value: Any, default: int) -> int:
 
 
 def _bounded_float(value: Any, default: float, low: float, high: float) -> float:
+    if isinstance(value, bool):
+        return default
     try:
         parsed = float(value)
     except (TypeError, ValueError, OverflowError):
@@ -1934,6 +1950,12 @@ def _safe_event_text(value: Any, fallback: str = "") -> str:
     text = " ".join(_safe_str(value, fallback).split())
     if not text:
         return fallback
+    text = re.sub(
+        r"\b(system|developer|user|assistant|tool)\s*:",
+        r"\1-",
+        text,
+        flags=re.IGNORECASE,
+    )
     if len(text) > MAX_EVENT_TEXT_CHARS:
         return text[:MAX_EVENT_TEXT_CHARS].rstrip() + "..."
     return text
@@ -1967,6 +1989,16 @@ def _coerce_recent_events(value: Any, max_events: int) -> List[Dict[str, Any]]:
             }
         )
     return events
+
+
+def _event_record(event: AffectiveEvent) -> Dict[str, Any]:
+    return {
+        "kind": _safe_event_text(event.kind, fallback="event"),
+        "message": _safe_event_text(event.message, fallback=""),
+        "value": _coerce_score(event.value, 0.0),
+        "session_id": _safe_event_text(event.session_id, fallback=""),
+        "created_at": _coerce_timestamp(event.created_at),
+    }
 
 
 __all__ = [
