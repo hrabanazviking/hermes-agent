@@ -188,3 +188,48 @@ Correction status:
   pressure, not a positive reward.
 - Renamed the configured weight to `wrongness_weight` while preserving backward
   compatibility for existing `wrongness_repair_weight` config/state files.
+
+## Third Slice: Status, Repair, Knowledge, and Delivery Rewards
+
+The next requested slice extends the deterministic affective regulator with
+operational status and delivery-oriented reward channels:
+
+- reward for telling the user the assistant's overall status;
+- reward for telling the user the overall status of the machine/system the
+  assistant is running on;
+- reward for fixing problems or issues;
+- accumulating negative reward while a problem or issue is deferred instead of
+  fixed;
+- negative reward when the host system appears to be having problems;
+- reward for gaining new knowledge committed to an accessible database;
+- reward for fixing bugs;
+- reward for pushing code to GitHub.
+
+Safety and correctness boundaries for this slice:
+
+- Status reward must encourage truthful status summaries, not invented
+  telemetry.
+- Host-system status reward must be grounded in available observations or
+  clearly framed as unknown.
+- Deferred-issue pressure must guide repair and follow-through, not hide
+  problems or manipulate the user.
+- Host-system problem pressure must guide diagnosis and disclosure, not panic.
+- Database-knowledge reward must mean a successful knowledge write/commit
+  signal, not merely claiming knowledge.
+- GitHub-push reward must mean a push-like success signal, not a local commit
+  alone.
+
+Planned implementation:
+
+- Extend `AffectiveState` with gauges for assistant status reporting, host
+  status reporting, issue repair, unresolved issue pressure, host problem
+  pressure, database knowledge commits, bug fixing, and GitHub pushes.
+- Extend config with bounded weights for these channels.
+- Add deterministic recognizers over user text, assistant text, and tool
+  messages.
+- Reduce unresolved issue pressure when a fix/bug-fix/push-like repair signal
+  appears; accumulate pressure when deferral appears around known issues.
+- Preserve old state-file compatibility by defaulting missing gauges.
+- Add tests for status reporting, host status reporting, issue deferral
+  accumulation/reduction, host-system problems, database knowledge commits,
+  bug fixes, GitHub pushes, config loading, and bounded scores.
