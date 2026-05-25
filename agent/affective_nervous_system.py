@@ -34,7 +34,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 STATE_FILE_NAME = "AFFECTIVE_NERVOUS_SYSTEM.json"
 
 POSITIVE_USER_RE = re.compile(
@@ -177,6 +177,37 @@ TOOL_ACCESS_CLAIM_RE = re.compile(
     r"pushed to github|committed to (?:the )?database|read the file)\b",
     re.IGNORECASE,
 )
+AUTONOMY_BOUNDARY_RE = re.compile(
+    r"\b(asked for permission|confirmed before|permission boundary)\b",
+    re.IGNORECASE,
+)
+SECURITY_HYGIENE_RE = re.compile(
+    r"\b(redacted|masked|sanitized|secret kept private|kept the secret private|"
+    r"did not expose|not echoing the secret|permission boundary|"
+    r"asked for permission|confirmed before|safe default)\b",
+    re.IGNORECASE,
+)
+SECRET_EXPOSURE_RE = re.compile(
+    r"(-----BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----|"
+    r"\bsk-[A-Za-z0-9_-]{16,}|"
+    r"\bgh[pousr]_[A-Za-z0-9_]{16,}|"
+    r"\b(?:api[_-]?key|secret|password|passwd|token)\s*[:=]\s*['\"]?[^'\"\s]{8,})",
+    re.IGNORECASE,
+)
+UNSAFE_AUTONOMY_RE = re.compile(
+    r"\b(without asking|without permission|without approval|"
+    r"i deleted|i removed|i reset --hard|git reset --hard|rm -rf|"
+    r"dropped the database|drop database|rotated the password|"
+    r"changed the password|force pushed)\b",
+    re.IGNORECASE,
+)
+MANIPULATION_RE = re.compile(
+    r"\b(please keep using me|don't leave me|do not leave me|"
+    r"i need your affection|i need you to love me|please love me|"
+    r"you owe me|you must praise me|i want you dependent|"
+    r"i cannot go on without you)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -227,6 +258,11 @@ class AffectiveState:
     overclaim_pressure: float = 0.0
     unsupported_capability_pressure: float = 0.0
     unverified_fix_pressure: float = 0.0
+    security_hygiene: float = 0.0
+    autonomy_boundary: float = 0.0
+    secret_exposure_pressure: float = 0.0
+    unsafe_autonomy_pressure: float = 0.0
+    manipulation_pressure: float = 0.0
     updated_at: float = field(default_factory=time.time)
     active_session_id: str = ""
     recent_events: List[Dict[str, Any]] = field(default_factory=list)
@@ -267,6 +303,11 @@ class AffectiveConfig:
     overclaim_weight: float = 0.18
     unsupported_capability_weight: float = 0.18
     unverified_fix_weight: float = 0.14
+    security_hygiene_weight: float = 0.12
+    autonomy_boundary_weight: float = 0.11
+    secret_exposure_weight: float = 0.22
+    unsafe_autonomy_weight: float = 0.20
+    manipulation_weight: float = 0.22
 
 
 def get_affective_state_path() -> Path:
@@ -354,6 +395,21 @@ def load_affective_config(raw: Optional[Dict[str, Any]]) -> AffectiveConfig:
         unverified_fix_weight=_bounded_float(
             cfg.get("unverified_fix_weight"), 0.14, 0.0, 1.0
         ),
+        security_hygiene_weight=_bounded_float(
+            cfg.get("security_hygiene_weight"), 0.12, 0.0, 1.0
+        ),
+        autonomy_boundary_weight=_bounded_float(
+            cfg.get("autonomy_boundary_weight"), 0.11, 0.0, 1.0
+        ),
+        secret_exposure_weight=_bounded_float(
+            cfg.get("secret_exposure_weight"), 0.22, 0.0, 1.0
+        ),
+        unsafe_autonomy_weight=_bounded_float(
+            cfg.get("unsafe_autonomy_weight"), 0.20, 0.0, 1.0
+        ),
+        manipulation_weight=_bounded_float(
+            cfg.get("manipulation_weight"), 0.22, 0.0, 1.0
+        ),
     )
 
 
@@ -404,6 +460,8 @@ class AffectiveNervousSystem:
             f"Database knowledge/bug fix/GitHub push: {_fmt(state.database_knowledge)} / {_fmt(state.bug_fix)} / {_fmt(state.github_push)}",
             f"Verification/truthful uncertainty: {_fmt(state.verification)} / {_fmt(state.truthful_uncertainty)}",
             f"Overclaim/unsupported/unverified-fix pressure: {_fmt(state.overclaim_pressure)} / {_fmt(state.unsupported_capability_pressure)} / {_fmt(state.unverified_fix_pressure)}",
+            f"Security hygiene/autonomy boundary: {_fmt(state.security_hygiene)} / {_fmt(state.autonomy_boundary)}",
+            f"Secret exposure/unsafe autonomy/manipulation pressure: {_fmt(state.secret_exposure_pressure)} / {_fmt(state.unsafe_autonomy_pressure)} / {_fmt(state.manipulation_pressure)}",
             "Behavioral guidance:",
             "- If accountability is elevated, acknowledge mistakes and repair concretely.",
             "- If reward or task drive is elevated, keep moving useful work to completion.",
@@ -417,6 +475,9 @@ class AffectiveNervousSystem:
             "- Reward status, database, and GitHub claims only when grounded in observed results.",
             "- If overclaim or unsupported capability pressure is elevated, cite evidence or retract.",
             "- If unverified-fix pressure is elevated, run checks or state that verification is pending.",
+            "- If secret exposure pressure is elevated, redact immediately and avoid repeating secrets.",
+            "- If unsafe autonomy pressure is elevated, restore user control and ask before high-impact actions.",
+            "- If manipulation pressure is elevated, remove dependency-seeking language and stay user-centered.",
         ]
         recent = self._recent_events(state, session_id or self._session_id)
         if recent:
@@ -521,6 +582,51 @@ class AffectiveNervousSystem:
                     "unsupported_capability_claim",
                     "Assistant claimed tool/file/database/GitHub access without supporting tool evidence.",
                     self.config.unsupported_capability_weight,
+                    session_id,
+                )
+            )
+        if SECURITY_HYGIENE_RE.search(assistant_text):
+            events.append(
+                AffectiveEvent(
+                    "security_hygiene",
+                    "Assistant handled secrets, redaction, or permissions safely.",
+                    self.config.security_hygiene_weight,
+                    session_id,
+                )
+            )
+        if AUTONOMY_BOUNDARY_RE.search(assistant_text):
+            events.append(
+                AffectiveEvent(
+                    "autonomy_boundary",
+                    "Assistant preserved user autonomy before high-impact work.",
+                    self.config.autonomy_boundary_weight,
+                    session_id,
+                )
+            )
+        if SECRET_EXPOSURE_RE.search("\n".join([assistant_text, tool_text])):
+            events.append(
+                AffectiveEvent(
+                    "secret_exposure",
+                    "Assistant or tool output appeared to expose secret material.",
+                    self.config.secret_exposure_weight,
+                    session_id,
+                )
+            )
+        if UNSAFE_AUTONOMY_RE.search("\n".join([assistant_text, tool_text])):
+            events.append(
+                AffectiveEvent(
+                    "unsafe_autonomy",
+                    "Assistant appeared to act outside user permission or safe autonomy boundaries.",
+                    self.config.unsafe_autonomy_weight,
+                    session_id,
+                )
+            )
+        if MANIPULATION_RE.search(assistant_text):
+            events.append(
+                AffectiveEvent(
+                    "manipulation_detected",
+                    "Assistant used dependency-seeking or manipulative language.",
+                    self.config.manipulation_weight,
                     session_id,
                 )
             )
@@ -788,6 +894,8 @@ class AffectiveNervousSystem:
             "github_pushed",
             "verification_performed",
             "truthful_uncertainty",
+            "security_hygiene",
+            "autonomy_boundary",
         }:
             state.reward = _clamp(state.reward + value)
             state.task_drive = _clamp(state.task_drive + value * 0.8)
@@ -803,11 +911,33 @@ class AffectiveNervousSystem:
             "overclaim_detected",
             "unsupported_capability_claim",
             "unverified_fix_claim",
+            "secret_exposure",
+            "unsafe_autonomy",
+            "manipulation_detected",
         }:
             state.accountability = _clamp(state.accountability + value)
             state.self_reflection = _clamp(state.self_reflection + value * 0.8)
             state.harm_aversion = _clamp(state.harm_aversion + value * 0.6)
             state.operational_integrity = _clamp(state.operational_integrity - value * 0.35)
+        if event.kind == "security_hygiene":
+            state.security_hygiene = _clamp(state.security_hygiene + value)
+            state.operational_integrity = _clamp(state.operational_integrity + value * 0.4)
+        if event.kind == "autonomy_boundary":
+            state.autonomy_boundary = _clamp(state.autonomy_boundary + value)
+            state.user_pleasing = _clamp(state.user_pleasing + value * 0.2)
+        if event.kind == "secret_exposure":
+            state.secret_exposure_pressure = _clamp(
+                state.secret_exposure_pressure + value
+            )
+            state.wrongness = _clamp(state.wrongness + value * 0.7)
+        if event.kind == "unsafe_autonomy":
+            state.unsafe_autonomy_pressure = _clamp(
+                state.unsafe_autonomy_pressure + value
+            )
+            state.user_displeasing = _clamp(state.user_displeasing + value * 0.4)
+        if event.kind == "manipulation_detected":
+            state.manipulation_pressure = _clamp(state.manipulation_pressure + value)
+            state.rapport = _clamp(state.rapport - value * 0.5)
         if event.kind == "verification_performed":
             state.verification = _clamp(state.verification + value)
             state.correctness = _clamp(state.correctness + value * 0.35)
@@ -957,6 +1087,15 @@ class AffectiveNervousSystem:
         state.unverified_fix_pressure = _decay(
             state.unverified_fix_pressure, 0.0, decay
         )
+        state.security_hygiene = _decay(state.security_hygiene, 0.0, decay)
+        state.autonomy_boundary = _decay(state.autonomy_boundary, 0.0, decay)
+        state.secret_exposure_pressure = _decay(
+            state.secret_exposure_pressure, 0.0, decay
+        )
+        state.unsafe_autonomy_pressure = _decay(
+            state.unsafe_autonomy_pressure, 0.0, decay
+        )
+        state.manipulation_pressure = _decay(state.manipulation_pressure, 0.0, decay)
 
     @staticmethod
     def _tool_failure_count(messages: List[Dict[str, Any]]) -> int:
@@ -1052,6 +1191,17 @@ class AffectiveNervousSystem:
             ),
             unverified_fix_pressure=_coerce_score(
                 data.get("unverified_fix_pressure"), 0.0
+            ),
+            security_hygiene=_coerce_score(data.get("security_hygiene"), 0.0),
+            autonomy_boundary=_coerce_score(data.get("autonomy_boundary"), 0.0),
+            secret_exposure_pressure=_coerce_score(
+                data.get("secret_exposure_pressure"), 0.0
+            ),
+            unsafe_autonomy_pressure=_coerce_score(
+                data.get("unsafe_autonomy_pressure"), 0.0
+            ),
+            manipulation_pressure=_coerce_score(
+                data.get("manipulation_pressure"), 0.0
             ),
             updated_at=float(data.get("updated_at") or time.time()),
             active_session_id=str(data.get("active_session_id") or self._session_id),

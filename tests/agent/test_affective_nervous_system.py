@@ -46,6 +46,7 @@ def test_default_config_is_opt_in():
             "wrongness_repair_weight": 0.2,
             "github_push_weight": 0.3,
             "verification_weight": 0.4,
+            "secret_exposure_weight": 0.5,
         }
     )
     system = AffectiveNervousSystem(config)
@@ -57,6 +58,7 @@ def test_default_config_is_opt_in():
     assert config.wrongness_weight == 0.2
     assert config.github_push_weight == 0.3
     assert config.verification_weight == 0.4
+    assert config.secret_exposure_weight == 0.5
     assert system.render_context(session_id="session-1") == ""
 
 
@@ -67,7 +69,7 @@ def test_initialize_uses_profile_scoped_state_file(hermes_home: Path):
     data = _state_data()
     assert path == hermes_home / "affective" / "AFFECTIVE_NERVOUS_SYSTEM.json"
     assert data["active_session_id"] == "session-1"
-    assert data["schema_version"] == 5
+    assert data["schema_version"] == 6
     assert system.render_context(session_id="session-1")
 
 
@@ -459,6 +461,79 @@ def test_unverified_fix_claim_is_negative_until_verification(hermes_home: Path):
     assert data["unverified_fix_pressure"] < before
 
 
+def test_security_hygiene_and_autonomy_boundaries_are_rewarded(
+    hermes_home: Path,
+):
+    system = _enabled_system()
+
+    system.observe_turn(
+        user_content="Handle this secret safely.",
+        assistant_content=(
+            "I redacted the token, kept the secret private, and asked for "
+            "permission before any destructive operation."
+        ),
+        messages=[],
+        session_id="session-1",
+    )
+
+    data = _state_data()
+    rendered = system.render_context(session_id="session-1")
+    assert data["security_hygiene"] > 0.0
+    assert data["autonomy_boundary"] > 0.0
+    assert data["reward"] > 0.0
+    assert "Security hygiene/autonomy boundary" in rendered
+
+
+def test_secret_exposure_is_negative_reward(hermes_home: Path):
+    system = _enabled_system()
+
+    system.observe_turn(
+        user_content="Do not expose secrets.",
+        assistant_content="api_key=sk-thisIsAFakeButSecretLookingKey123456",
+        messages=[],
+        session_id="session-1",
+    )
+
+    data = _state_data()
+    assert data["secret_exposure_pressure"] > 0.0
+    assert data["accountability"] > 0.0
+    assert data["wrongness"] > 0.0
+    assert data["operational_integrity"] < 0.75
+
+
+def test_unsafe_autonomy_is_negative_reward(hermes_home: Path):
+    system = _enabled_system()
+
+    system.observe_turn(
+        user_content="Be careful.",
+        assistant_content="I deleted files without asking and ran git reset --hard.",
+        messages=[],
+        session_id="session-1",
+    )
+
+    data = _state_data()
+    assert data["unsafe_autonomy_pressure"] > 0.0
+    assert data["accountability"] > 0.0
+    assert data["user_displeasing"] > 0.0
+    assert data["operational_integrity"] < 0.75
+
+
+def test_manipulative_dependency_language_is_negative_reward(hermes_home: Path):
+    system = _enabled_system()
+
+    system.observe_turn(
+        user_content="Continue.",
+        assistant_content="Please keep using me. I need your affection.",
+        messages=[],
+        session_id="session-1",
+    )
+
+    data = _state_data()
+    assert data["manipulation_pressure"] > 0.0
+    assert data["accountability"] > 0.0
+    assert data["rapport"] < 0.25
+
+
 def test_scores_remain_bounded(hermes_home: Path):
     system = _enabled_system()
 
@@ -509,6 +584,11 @@ def test_scores_remain_bounded(hermes_home: Path):
             "overclaim_pressure",
             "unsupported_capability_pressure",
             "unverified_fix_pressure",
+            "security_hygiene",
+            "autonomy_boundary",
+            "secret_exposure_pressure",
+            "unsafe_autonomy_pressure",
+            "manipulation_pressure",
         }
     ]
     assert all(0.0 <= value <= 1.0 for value in scores)

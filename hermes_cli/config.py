@@ -1234,6 +1234,11 @@ DEFAULT_CONFIG = {
         "overclaim_weight": 0.18,
         "unsupported_capability_weight": 0.18,
         "unverified_fix_weight": 0.14,
+        "security_hygiene_weight": 0.12,
+        "autonomy_boundary_weight": 0.11,
+        "secret_exposure_weight": 0.22,
+        "unsafe_autonomy_weight": 0.20,
+        "manipulation_weight": 0.22,
     },
 
     # Persistent memory -- bounded curated memory injected into system prompt

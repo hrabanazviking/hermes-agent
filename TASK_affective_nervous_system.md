@@ -302,6 +302,19 @@ Safety boundary:
 - This phase must reinforce user autonomy and security without blocking normal
   helpful work.
 
+Status:
+
+- Implemented schema version 6 with gauges for security hygiene, autonomy
+  boundaries, secret exposure pressure, unsafe autonomy pressure, and
+  manipulation/dependency pressure.
+- Added deterministic recognizers for redaction/sanitization, permission
+  boundaries, exposed secret-looking values, high-impact actions without
+  permission, and dependency-seeking language.
+- Secret exposure, unsafe autonomy, and manipulation increase accountability
+  and reduce operational/rapport signals; security hygiene and autonomy
+  boundaries increase reward and operational integrity.
+- Added config weights, example config entries, and focused tests.
+
 ### Phase 3: Continuity and Follow-Through
 
 Target channels:
