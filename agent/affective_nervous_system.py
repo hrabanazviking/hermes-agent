@@ -1689,8 +1689,9 @@ class AffectiveNervousSystem:
             return AffectiveState(active_session_id=self._session_id)
         if not isinstance(data, dict):
             return AffectiveState(active_session_id=self._session_id)
+        stored_schema_version = _positive_int(data.get("schema_version"), SCHEMA_VERSION)
         return AffectiveState(
-            schema_version=int(data.get("schema_version") or SCHEMA_VERSION),
+            schema_version=max(stored_schema_version, SCHEMA_VERSION),
             reward=_coerce_score(data.get("reward"), 0.0),
             accountability=_coerce_score(data.get("accountability"), 0.0),
             task_drive=_coerce_score(data.get("task_drive"), 0.45),

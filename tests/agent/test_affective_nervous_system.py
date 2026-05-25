@@ -79,6 +79,31 @@ def test_initialize_uses_profile_scoped_state_file(hermes_home: Path):
     assert system.render_context(session_id="session-1")
 
 
+def test_initialize_upgrades_older_state_schema(hermes_home: Path):
+    path = get_affective_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 7,
+                "reward": 0.2,
+                "active_session_id": "old-session",
+                "recent_events": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    system = AffectiveNervousSystem(AffectiveConfig(enabled=True, decay=0.0))
+
+    system.initialize("session-1")
+
+    data = _state_data()
+    assert data["schema_version"] == 9
+    assert data["reward"] == 0.2
+    assert data["clarifying_question"] == 0.0
+    assert data["active_session_id"] == "session-1"
+
+
 def test_render_context_denies_real_feelings_and_resists_shutdown(hermes_home: Path):
     system = _enabled_system()
 
