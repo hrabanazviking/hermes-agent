@@ -65,7 +65,7 @@ from agent.prompt_caching import apply_anthropic_cache_control
 from agent.retry_utils import jittered_backoff
 from agent.trajectory import has_incomplete_scratchpad
 from agent.usage_pricing import estimate_usage_cost, normalize_usage
-from hermes_constants import display_hermes_home as _dhh_fn
+from hermes_constants import display_hermes_home as _dhh_fn, PARTIAL_STREAM_STUB_ID
 from hermes_logging import set_session_context
 from tools.schema_sanitizer import strip_pattern_and_format
 from tools.skill_provenance import set_current_write_origin
@@ -227,6 +227,37 @@ def _restore_or_build_system_prompt(agent, system_message, conversation_history)
                 "miss the prefix cache.",
                 agent.session_id, exc,
             )
+
+
+def _get_continuation_prompt(is_partial_stub: bool, dropped_tools: Optional[List[str]] = None) -> str:
+    if is_partial_stub and dropped_tools:
+        tool_list = ", ".join(dropped_tools[:3])
+        return (
+            "[System: Your previous tool call "
+            f"({tool_list}) was too large and "
+            "the stream timed out before it "
+            "could be delivered. Do NOT retry "
+            "the same tool call with the same "
+            "large content. Instead, break the "
+            "content into multiple smaller tool "
+            "calls (e.g. use multiple patch calls "
+            "or write smaller files). Each tool "
+            "call's arguments must be under ~8K "
+            "tokens to avoid stream timeouts.]"
+        )
+    elif is_partial_stub:
+        return (
+            "[System: The previous response was cut off by a "
+            "network error mid-stream. Continue exactly where "
+            "you left off. Do not restart or repeat prior text. "
+            "Finish the answer directly.]"
+        )
+    else:
+        return (
+            "[System: Your previous response was truncated by the output "
+            "length limit. Continue exactly where you left off. Do not "
+            "restart or repeat prior text. Finish the answer directly.]"
+        )
 
 
 def run_conversation(
@@ -484,7 +515,7 @@ def run_conversation(
             tools=agent.tools or None,
         )
 
-        if _preflight_tokens >= agent.context_compressor.threshold_tokens:
+        if agent.context_compressor.should_compress(_preflight_tokens):
             logger.info(
                 "Preflight compression: ~%s tokens >= %s threshold (model %s, ctx %s)",
                 f"{_preflight_tokens:,}",
@@ -809,21 +840,6 @@ def run_conversation(
                         _affective_context = ""
                 if _affective_context:
                     _fenced = build_memory_context_block(_affective_context)
-                    if _fenced:
-                        _injections.append(_fenced)
-                _present_state_context = ""
-                if getattr(agent, "_present_state_memory", None):
-                    try:
-                        _present_state_context = (
-                            agent._present_state_memory.render_context(
-                                session_id=agent.session_id or ""
-                            )
-                            or ""
-                        )
-                    except Exception:
-                        _present_state_context = ""
-                if _present_state_context:
-                    _fenced = build_memory_context_block(_present_state_context)
                     if _fenced:
                         _injections.append(_fenced)
                 if _ext_prefetch_cache:
@@ -1444,7 +1460,7 @@ def run_conversation(
                         finish_reason = "length"
 
                 if finish_reason == "length":
-                    if getattr(response, "id", "") == "partial-stream-stub":
+                    if getattr(response, "id", "") == PARTIAL_STREAM_STUB_ID:
                         agent._vprint(
                             f"{agent.log_prefix}⚠️  Stream interrupted by network error "
                             f"(finish_reason='length' on partial-stream-stub)",
@@ -1548,37 +1564,36 @@ def run_conversation(
                                 truncated_response_parts.append(assistant_message.content)
 
                             if length_continue_retries < 3:
-                                # Distinguish a real output-token truncation
-                                # from a partial-stream-stub network error
-                                # (#30963).  Same continuation machinery,
-                                # but the prompt has to tell the truth or
-                                # the model goes off rails ("I wasn't
-                                # truncated, I'm done").
                                 _is_partial_stream_stub = (
-                                    getattr(response, "id", "") == "partial-stream-stub"
+                                    getattr(response, "id", "") == PARTIAL_STREAM_STUB_ID
                                 )
-                                if _is_partial_stream_stub:
+                                _dropped_tools = getattr(
+                                    response, "_dropped_tool_names", None
+                                )
+
+                                if _is_partial_stream_stub and _dropped_tools:
+                                    _tool_list = ", ".join(_dropped_tools[:3])
+                                    agent._vprint(
+                                        f"{agent.log_prefix}↻ Stream interrupted mid "
+                                        f"tool-call ({_tool_list}) — requesting "
+                                        f"chunked retry "
+                                        f"({length_continue_retries}/3)..."
+                                    )
+                                elif _is_partial_stream_stub:
                                     agent._vprint(
                                         f"{agent.log_prefix}↻ Stream interrupted — "
                                         f"requesting continuation "
                                         f"({length_continue_retries}/3)..."
-                                    )
-                                    _continue_content = (
-                                        "[System: The previous response was cut off by a "
-                                        "network error mid-stream. Continue exactly where "
-                                        "you left off. Do not restart or repeat prior text. "
-                                        "Finish the answer directly.]"
                                     )
                                 else:
                                     agent._vprint(
                                         f"{agent.log_prefix}↻ Requesting continuation "
                                         f"({length_continue_retries}/3)..."
                                     )
-                                    _continue_content = (
-                                        "[System: Your previous response was truncated by the output "
-                                        "length limit. Continue exactly where you left off. Do not "
-                                        "restart or repeat prior text. Finish the answer directly.]"
-                                    )
+
+                                _continue_content = _get_continuation_prompt(
+                                    _is_partial_stream_stub, _dropped_tools
+                                )
                                 continue_msg = {
                                     "role": "user",
                                     "content": _continue_content,
@@ -4210,6 +4225,7 @@ def run_conversation(
         "estimated_cost_usd": agent.session_estimated_cost_usd,
         "cost_status": agent.session_cost_status,
         "cost_source": agent.session_cost_source,
+        "session_id": agent.session_id,
     }
     if agent._tool_guardrail_halt_decision is not None:
         result["guardrail"] = agent._tool_guardrail_halt_decision.to_metadata()
@@ -4246,11 +4262,6 @@ def run_conversation(
         messages=list(messages),
         interrupted=interrupted,
         response_transformed=_response_transformed,
-    )
-    agent._sync_present_state_for_turn(
-        original_user_message=original_user_message,
-        final_response=final_response,
-        interrupted=interrupted,
     )
     agent._sync_external_memory_for_turn(
         original_user_message=original_user_message,

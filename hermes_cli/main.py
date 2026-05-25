@@ -280,20 +280,29 @@ load_hermes_dotenv(project_env=PROJECT_ROOT / ".env")
 # module-import time). Without this, config.yaml's toggle is ignored because
 # the setup_logging() call below imports agent.redact, which reads the env var
 # exactly once. Env var in .env still wins — this is config.yaml fallback only.
+#
+# We also read network.force_ipv4 from the same yaml load to avoid two
+# separate config.yaml reads (saves ~17ms on every CLI startup — the second
+# `load_config()` was doing a full deep-merge for one boolean lookup).
+_FORCE_IPV4_EARLY = False
 try:
-    if "HERMES_REDACT_SECRETS" not in os.environ:
-        import yaml as _yaml_early
+    import yaml as _yaml_early
 
-        _cfg_path = get_hermes_home() / "config.yaml"
-        if _cfg_path.exists():
-            with open(_cfg_path, encoding="utf-8") as _f:
-                _early_sec_cfg = (_yaml_early.safe_load(_f) or {}).get("security", {})
+    _cfg_path = get_hermes_home() / "config.yaml"
+    if _cfg_path.exists():
+        with open(_cfg_path, encoding="utf-8") as _f:
+            _early_cfg_raw = _yaml_early.safe_load(_f) or {}
+        if "HERMES_REDACT_SECRETS" not in os.environ:
+            _early_sec_cfg = _early_cfg_raw.get("security", {})
             if isinstance(_early_sec_cfg, dict):
                 _early_redact = _early_sec_cfg.get("redact_secrets")
                 if _early_redact is not None:
                     os.environ["HERMES_REDACT_SECRETS"] = str(_early_redact).lower()
-            del _early_sec_cfg
-        del _cfg_path
+        _early_net_cfg = _early_cfg_raw.get("network", {})
+        if isinstance(_early_net_cfg, dict) and _early_net_cfg.get("force_ipv4"):
+            _FORCE_IPV4_EARLY = True
+        del _early_cfg_raw
+    del _cfg_path
 except Exception:
     pass  # best-effort — redaction stays at default (enabled) on config errors
 
@@ -307,17 +316,15 @@ except Exception:
     pass  # best-effort — don't crash the CLI if logging setup fails
 
 # Apply IPv4 preference early, before any HTTP clients are created.
-try:
-    from hermes_cli.config import load_config as _load_config_early
-    from hermes_constants import apply_ipv4_preference as _apply_ipv4
+# We already determined whether to force IPv4 from the raw yaml read above —
+# this just calls the toggle without a redundant load_config() round trip.
+if _FORCE_IPV4_EARLY:
+    try:
+        from hermes_constants import apply_ipv4_preference as _apply_ipv4
 
-    _early_cfg = _load_config_early()
-    _net = _early_cfg.get("network", {})
-    if isinstance(_net, dict) and _net.get("force_ipv4"):
         _apply_ipv4(force=True)
-    del _early_cfg, _net
-except Exception:
-    pass  # best-effort — don't crash if config isn't available yet
+    except Exception:
+        pass  # best-effort — don't crash if hermes_constants not importable yet
 
 import logging
 import threading
@@ -2490,6 +2497,7 @@ def select_provider_and_model(args=None):
     elif selected_provider == "azure-foundry":
         _model_flow_azure_foundry(config, current_model)
     elif selected_provider in {
+        "openai-api",
         "gemini",
         "deepseek",
         "xai",
@@ -2880,7 +2888,7 @@ def _aux_flow_provider_model(
 
 def _aux_flow_custom_endpoint(task: str, task_cfg: dict) -> None:
     """Prompt for a direct OpenAI-compatible base_url + optional api_key/model."""
-    import getpass
+    from hermes_cli.secret_prompt import masked_secret_prompt
 
     display_name = next((name for key, name, _ in _all_aux_tasks() if key == task), task)
     current_base_url = str(task_cfg.get("base_url") or "").strip()
@@ -2914,7 +2922,7 @@ def _aux_flow_custom_endpoint(task: str, task_cfg: dict) -> None:
         return
     model = model or current_model
     try:
-        api_key = getpass.getpass(
+        api_key = masked_secret_prompt(
             "API key (optional, blank = use OPENAI_API_KEY): "
         ).strip()
     except (KeyboardInterrupt, EOFError):
@@ -3638,6 +3646,7 @@ def _model_flow_custom(config):
     """
     from hermes_cli.auth import _save_model_choice, deactivate_provider
     from hermes_cli.config import get_env_value, load_config, save_config
+    from hermes_cli.secret_prompt import masked_secret_prompt
 
     current_url = get_env_value("OPENAI_BASE_URL") or ""
     current_key = get_env_value("OPENAI_API_KEY") or ""
@@ -3653,9 +3662,7 @@ def _model_flow_custom(config):
         base_url = input(
             f"API base URL [{current_url or 'e.g. https://api.example.com/v1'}]: "
         ).strip()
-        import getpass
-
-        api_key = getpass.getpass(
+        api_key = masked_secret_prompt(
             f"API key [{current_key[:8] + '...' if current_key else 'optional'}]: "
         ).strip()
     except (KeyboardInterrupt, EOFError):
@@ -4067,7 +4074,6 @@ def _model_flow_azure_foundry(config, current_model=""):
         save_config,
     )
     from hermes_cli import azure_detect
-    import getpass
 
     # ── Load current Azure Foundry configuration ─────────────────────
     model_cfg = config.get("model", {})
@@ -4230,8 +4236,10 @@ def _model_flow_azure_foundry(config, current_model=""):
             token_provider = None
     else:
         print()
+        from hermes_cli.secret_prompt import masked_secret_prompt
+
         try:
-            api_key = getpass.getpass(
+            api_key = masked_secret_prompt(
                 f"API key [{current_api_key[:8] + '...' if current_api_key else 'required'}]: "
             ).strip()
         except (KeyboardInterrupt, EOFError):
@@ -4628,11 +4636,27 @@ def _model_flow_named_custom(config, provider_info):
     print(f"   Provider: {name} ({base_url})")
 
 
-# Keep the historical eager model catalog import on desktop/CI. Termux defers
-# it to the model-selection handlers so plain `hermes --tui` does not pay for
-# requests/models.dev catalog imports before the Node TUI starts.
-if not _is_termux_startup_environment():
-    from hermes_cli.models import _PROVIDER_MODELS
+# Lazy-export the model catalog at module level. Tests and a handful of
+# downstream call sites read `hermes_cli.main._PROVIDER_MODELS` directly,
+# so the symbol needs to be reachable as a module attribute. But importing
+# the catalog eagerly costs ~55ms on every `hermes` invocation — including
+# fast paths like `hermes --version` and slash-command dispatch that never
+# touch the catalog. PEP 562 module-level __getattr__ defers the import
+# until first attribute access, so the cost is only paid by callers that
+# actually look up the catalog. Termux already defers via the same
+# mechanism (its model-selection handlers do their own function-local
+# imports), so the explicit termux branch from before is no longer needed.
+_LAZY_MODEL_EXPORTS = ("_PROVIDER_MODELS",)
+
+
+def __getattr__(name):
+    """Defer the model-catalog import until something actually reads it."""
+    if name in _LAZY_MODEL_EXPORTS:
+        from hermes_cli.models import _PROVIDER_MODELS
+        # Cache on the module so subsequent accesses skip the import machinery.
+        globals()[name] = _PROVIDER_MODELS
+        return _PROVIDER_MODELS
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _current_reasoning_effort(config) -> str:
@@ -4802,10 +4826,10 @@ def _model_flow_copilot(config, current_model=""):
                 print(f"  Login failed: {exc}")
                 return
         elif choice == "2":
-            try:
-                import getpass
+            from hermes_cli.secret_prompt import masked_secret_prompt
 
-                new_key = getpass.getpass("  Token (COPILOT_GITHUB_TOKEN): ").strip()
+            try:
+                new_key = masked_secret_prompt("  Token (COPILOT_GITHUB_TOKEN): ").strip()
             except (KeyboardInterrupt, EOFError):
                 print()
                 return
@@ -5057,10 +5081,9 @@ def _prompt_api_key(pconfig, existing_key: str, provider_id: str = "") -> tuple:
     ``return`` immediately — the user cancelled entry, declined to replace, or
     cleared the key and is now unconfigured.
     """
-    import getpass
-
     from hermes_cli.auth import LMSTUDIO_NOAUTH_PLACEHOLDER
     from hermes_cli.config import save_env_value
+    from hermes_cli.secret_prompt import masked_secret_prompt
 
     key_env = pconfig.api_key_env_vars[0] if pconfig.api_key_env_vars else ""
 
@@ -5070,7 +5093,7 @@ def _prompt_api_key(pconfig, existing_key: str, provider_id: str = "") -> tuple:
         else:
             prompt = f"{key_env} (or Enter to cancel): "
         try:
-            entered = getpass.getpass(prompt).strip()
+            entered = masked_secret_prompt(prompt).strip()
         except (KeyboardInterrupt, EOFError):
             print()
             return ""
@@ -5385,10 +5408,10 @@ def _model_flow_bedrock_api_key(config, region, current_model=""):
     else:
         print(f"  Endpoint: {mantle_base_url}")
         print()
-        try:
-            import getpass
+        from hermes_cli.secret_prompt import masked_secret_prompt
 
-            api_key = getpass.getpass("  Bedrock API Key: ").strip()
+        try:
+            api_key = masked_secret_prompt("  Bedrock API Key: ").strip()
         except (KeyboardInterrupt, EOFError):
             print()
             return
@@ -5960,10 +5983,10 @@ def _run_anthropic_oauth_flow(save_env_value):
         print()
         print("  If the setup-token was displayed above, paste it here:")
         print()
-        try:
-            import getpass
+        from hermes_cli.secret_prompt import masked_secret_prompt
 
-            manual_token = getpass.getpass(
+        try:
+            manual_token = masked_secret_prompt(
                 "  Paste setup-token (or Enter to cancel): "
             ).strip()
         except (KeyboardInterrupt, EOFError):
@@ -5991,10 +6014,10 @@ def _run_anthropic_oauth_flow(save_env_value):
         print()
         print("  Or paste an existing setup-token now (sk-ant-oat-...):")
         print()
-        try:
-            import getpass
+        from hermes_cli.secret_prompt import masked_secret_prompt
 
-            token = getpass.getpass("  Setup-token (or Enter to cancel): ").strip()
+        try:
+            token = masked_secret_prompt("  Setup-token (or Enter to cancel): ").strip()
         except (KeyboardInterrupt, EOFError):
             print()
             return False
@@ -6109,10 +6132,10 @@ def _model_flow_anthropic(config, current_model=""):
             print()
             print("  Get an API key at: https://platform.claude.com/settings/keys")
             print()
-            try:
-                import getpass
+            from hermes_cli.secret_prompt import masked_secret_prompt
 
-                api_key = getpass.getpass("  API key (sk-ant-...): ").strip()
+            try:
+                api_key = masked_secret_prompt("  API key (sk-ant-...): ").strip()
             except (KeyboardInterrupt, EOFError):
                 print()
                 return
@@ -7055,8 +7078,13 @@ def _update_via_zip(args):
         urlretrieve(zip_url, zip_path)
 
         print("→ Extracting...")
+        import stat as _stat
         with zipfile.ZipFile(zip_path, "r") as zf:
-            # Validate paths to prevent zip-slip (path traversal)
+            # Validate paths to prevent zip-slip (path traversal) AND reject
+            # symlink members. A GitHub source ZIP for hermes-agent itself
+            # should never contain symlinks — they'd point outside the
+            # extracted tree and let an attacker who can compromise the
+            # update mirror plant arbitrary files via the update path.
             tmp_dir_real = os.path.realpath(tmp_dir)
             for member in zf.infolist():
                 member_path = os.path.realpath(os.path.join(tmp_dir, member.filename))
@@ -7066,6 +7094,13 @@ def _update_via_zip(args):
                 ):
                     raise ValueError(
                         f"Zip-slip detected: {member.filename} escapes extraction directory"
+                    )
+                # Unix mode lives in the upper 16 bits of external_attr;
+                # mask to the file-type bits.
+                mode = (member.external_attr >> 16) & 0o170000
+                if _stat.S_ISLNK(mode):
+                    raise ValueError(
+                        f"ZIP contains unsupported symlink member: {member.filename}"
                     )
             zf.extractall(tmp_dir)
 
@@ -7743,8 +7778,11 @@ def _detect_concurrent_hermes_instances(
 
     This helper enumerates processes whose ``exe`` matches one of the venv's
     shims (``hermes.exe`` / ``hermes-gateway.exe``) and returns ``(pid,
-    process_name)`` pairs. The caller's own PID is excluded so the running
-    ``hermes update`` invocation never reports itself.
+    process_name)`` pairs. The caller's own PID and its entire ancestor
+    chain are excluded so the running ``hermes update`` invocation never
+    reports itself — this matters on Windows where the setuptools .exe
+    launcher (``hermes.exe``) is a separate process from the Python
+    interpreter it loads (``python.exe``).
 
     Returns an empty list off-Windows, on missing psutil, or when no other
     instances exist. Never raises — process enumeration is best-effort.
@@ -7757,8 +7795,38 @@ def _detect_concurrent_hermes_instances(
     except Exception:
         return []
 
-    if exclude_pid is None:
-        exclude_pid = os.getpid()
+    # Build a set of PIDs to exclude: the Python process itself plus its
+    # entire parent chain. On Windows the setuptools-generated hermes.exe
+    # launcher is a separate native process that spawns python.exe (the
+    # interpreter that runs our code).  os.getpid() returns the Python PID,
+    # but the launcher (which holds the file lock) is the parent.  Without
+    # walking the parent chain, every ``hermes update`` reports its own
+    # launcher as a concurrent instance — a false positive.
+    if exclude_pid is not None:
+        exclude_pids: set[int] = {exclude_pid}
+    else:
+        exclude_pids = {os.getpid()}
+    # The parent-walk is best-effort: if psutil rejects a PID (NoSuchProcess /
+    # AccessDenied) we stop walking and use whatever we've collected so far.
+    # Broader Exception catch on the outer block guards against partially-
+    # stubbed psutil in unit tests (e.g. a SimpleNamespace lacking Process /
+    # NoSuchProcess) — the surrounding update flow documents this helper as
+    # "never raises".
+    try:
+        current = psutil.Process(next(iter(exclude_pids)))
+        while True:
+            try:
+                parent = current.parent()
+            except Exception:
+                break
+            if parent is None or parent.pid <= 0:
+                break
+            if parent.pid in exclude_pids:
+                break  # loop detected
+            exclude_pids.add(parent.pid)
+            current = parent
+    except Exception:
+        pass
 
     # Resolve every shim path to its canonical form once for cheap comparison.
     shim_paths: set[str] = set()
@@ -7783,7 +7851,7 @@ def _detect_concurrent_hermes_instances(
             continue
         pid = info.get("pid")
         exe = info.get("exe")
-        if not exe or pid is None or pid == exclude_pid:
+        if not exe or pid is None or pid in exclude_pids:
             continue
         try:
             exe_norm = str(Path(exe).resolve()).lower()
