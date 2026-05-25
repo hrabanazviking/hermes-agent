@@ -102,3 +102,18 @@ Implemented after the task document was committed:
 - If main-model repair fails, Hermes falls back to the verifier-corrected answer.
 - If streaming already previewed the draft, Hermes marks the response as not previewed so the corrected final answer is still displayed.
 - Added focused tests in `tests/agent/test_truth_refiner.py`.
+
+## Saved Status
+
+- Fork implementation branch: `truth-validator`.
+- Fork task commit: `9666c5efc` (`Document truth refiner task`).
+- Fork implementation commit: `1fbd2d123` (`Add corrective truth refiner`).
+- Upstream donation branch: `donate-truth-refiner`.
+- Upstream donation commit: `2963ab31c` (`Add corrective truth refiner`).
+- Upstream PR: https://github.com/NousResearch/hermes-agent/pull/31794
+- PR shape: clean branch from `upstream/main`, with this task-planning doc excluded.
+- Verification before donation:
+  - `uv run ruff check agent/truth_refiner.py tests/agent/test_truth_refiner.py agent/agent_init.py agent/conversation_loop.py run_agent.py hermes_cli/config.py`
+  - `uv run python -m py_compile agent/truth_refiner.py agent/agent_init.py agent/conversation_loop.py run_agent.py`
+  - YAML parse check for `cli-config.yaml.example`
+  - `scripts/run_tests.sh tests/agent/test_truth_refiner.py tests/run_agent/test_run_agent.py -- -q`

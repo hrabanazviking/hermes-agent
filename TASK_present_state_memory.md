@@ -138,3 +138,17 @@ Implemented in one pass after approval:
 - Added session lineage handling for compression, resume, branch, and new-session rotations.
 - Added config keys under `memory.present_state_*`.
 - Added focused tests in `tests/agent/test_present_state_memory.py`.
+
+## Saved Status
+
+- Fork implementation branch: `main`.
+- Fork implementation commit: `0e21f355c` (`Add live present-state memory`).
+- Upstream donation branch: `donate-present-state-memory`.
+- Upstream donation commit: `761a85590` (`Add live present-state memory`).
+- Upstream PR: https://github.com/NousResearch/hermes-agent/pull/31785
+- PR shape: clean branch from `upstream/main`, with the task-planning doc excluded.
+- Verification before donation:
+  - `uv run ruff check agent/present_state_memory.py tests/agent/test_present_state_memory.py agent/agent_init.py agent/conversation_loop.py run_agent.py agent/tool_executor.py agent/agent_runtime_helpers.py agent/conversation_compression.py cli.py`
+  - `uv run python -m py_compile agent/present_state_memory.py agent/agent_init.py agent/conversation_loop.py run_agent.py agent/tool_executor.py agent/agent_runtime_helpers.py agent/conversation_compression.py cli.py`
+  - `scripts/run_tests.sh tests/agent/test_present_state_memory.py tests/agent/test_memory_provider.py tests/agent/test_memory_session_switch.py tests/run_agent/test_memory_sync_interrupted.py tests/run_agent/test_memory_nudge_counter_hydration.py`
+  - `scripts/run_tests.sh tests/run_agent/test_memory_provider_init.py tests/run_agent/test_run_agent.py -- -q`
