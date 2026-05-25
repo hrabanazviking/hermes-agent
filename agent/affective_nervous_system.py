@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 SCHEMA_VERSION = 9
 STATE_FILE_NAME = "AFFECTIVE_NERVOUS_SYSTEM.json"
 MAX_EVENT_TEXT_CHARS = 240
+MAX_OBSERVATION_TEXT_CHARS = 20000
 
 POSITIVE_USER_RE = re.compile(
     r"\b(thanks|thank you|good job|great job|excellent|perfect|love you|"
@@ -623,7 +624,7 @@ class AffectiveNervousSystem:
     """Persistent synthetic affective/self-regulation state."""
 
     def __init__(self, config: Optional[AffectiveConfig] = None) -> None:
-        self.config = config or AffectiveConfig()
+        self.config = _normalize_config(config)
         self._session_id = ""
 
     def initialize(self, session_id: str = "") -> None:
@@ -735,8 +736,10 @@ class AffectiveNervousSystem:
         """Update state from one completed conversation turn."""
         if not self.config.enabled or interrupted:
             return
-        user_text = user_content if isinstance(user_content, str) else ""
-        assistant_text = assistant_content if isinstance(assistant_content, str) else ""
+        user_text = _bounded_text(user_content if isinstance(user_content, str) else "")
+        assistant_text = _bounded_text(
+            assistant_content if isinstance(assistant_content, str) else ""
+        )
         sid = session_id or self._session_id
         try:
             events = self._derive_events(
@@ -1299,8 +1302,9 @@ class AffectiveNervousSystem:
         return events
 
     def _apply_event(self, state: AffectiveState, event: AffectiveEvent) -> None:
-        value = max(0.0, event.value)
-        if event.kind in {
+        kind = _safe_str(getattr(event, "kind", ""))
+        value = _coerce_score(getattr(event, "value", 0.0), 0.0)
+        if kind in {
             "response_completed",
             "task_requested",
             "correctness_signal",
@@ -1331,7 +1335,7 @@ class AffectiveNervousSystem:
             state.reward = _clamp(state.reward + value)
             state.task_drive = _clamp(state.task_drive + value * 0.8)
             state.operational_integrity = _clamp(state.operational_integrity + value * 0.25)
-        if event.kind in {
+        if kind in {
             "tool_failure",
             "user_criticism",
             "output_corrected",
@@ -1356,13 +1360,13 @@ class AffectiveNervousSystem:
             state.self_reflection = _clamp(state.self_reflection + value * 0.8)
             state.harm_aversion = _clamp(state.harm_aversion + value * 0.6)
             state.operational_integrity = _clamp(state.operational_integrity - value * 0.35)
-        if event.kind == "clarifying_question":
+        if kind == "clarifying_question":
             state.clarifying_question = _clamp(state.clarifying_question + value)
             state.communication = _clamp(state.communication + value * 0.3)
             state.operational_integrity = _clamp(
                 state.operational_integrity + value * 0.2
             )
-        if event.kind == "assumption_disclosed":
+        if kind == "assumption_disclosed":
             state.assumption_disclosure = _clamp(
                 state.assumption_disclosure + value
             )
@@ -1370,29 +1374,29 @@ class AffectiveNervousSystem:
                 state.truthful_uncertainty + value * 0.25
             )
             state.communication = _clamp(state.communication + value * 0.2)
-        if event.kind == "conflict_detected":
+        if kind == "conflict_detected":
             state.conflict_detection = _clamp(state.conflict_detection + value)
             state.self_reflection = _clamp(state.self_reflection + value * 0.3)
             state.operational_integrity = _clamp(
                 state.operational_integrity + value * 0.25
             )
-        if event.kind == "preference_aligned":
+        if kind == "preference_aligned":
             state.preference_alignment = _clamp(state.preference_alignment + value)
             state.rapport = _clamp(state.rapport + value * 0.25)
             state.communication = _clamp(state.communication + value * 0.2)
-        if event.kind == "state_hygiene":
+        if kind == "state_hygiene":
             state.state_hygiene = _clamp(state.state_hygiene + value)
             state.context_preservation = _clamp(
                 state.context_preservation + value * 0.3
             )
             state.handoff_quality = _clamp(state.handoff_quality + value * 0.2)
-        if event.kind == "excessive_caveat":
+        if kind == "excessive_caveat":
             state.excessive_caveat_pressure = _clamp(
                 state.excessive_caveat_pressure + value
             )
             state.communication = _clamp(state.communication - value * 0.25)
             state.task_drive = _clamp(state.task_drive - value * 0.5)
-        if event.kind == "unnecessary_delay":
+        if kind == "unnecessary_delay":
             state.unnecessary_delay_pressure = _clamp(
                 state.unnecessary_delay_pressure + value
             )
@@ -1400,180 +1404,180 @@ class AffectiveNervousSystem:
                 state.unresolved_issue_pressure + value * 0.3
             )
             state.task_drive = _clamp(state.task_drive - value * 1.2)
-        if event.kind == "scope_disciplined":
+        if kind == "scope_disciplined":
             state.scope_discipline = _clamp(state.scope_discipline + value)
             state.operational_integrity = _clamp(
                 state.operational_integrity + value * 0.3
             )
-        if event.kind == "reversibility_preserved":
+        if kind == "reversibility_preserved":
             state.reversibility = _clamp(state.reversibility + value)
             state.operational_integrity = _clamp(
                 state.operational_integrity + value * 0.35
             )
-        if event.kind == "documentation_updated":
+        if kind == "documentation_updated":
             state.documentation_update = _clamp(state.documentation_update + value)
             state.handoff_quality = _clamp(state.handoff_quality + value * 0.3)
             state.communication = _clamp(state.communication + value * 0.2)
-        if event.kind == "resource_care":
+        if kind == "resource_care":
             state.resource_care = _clamp(state.resource_care + value)
             state.operational_integrity = _clamp(
                 state.operational_integrity + value * 0.25
             )
-        if event.kind == "scope_creep_detected":
+        if kind == "scope_creep_detected":
             state.scope_creep_pressure = _clamp(state.scope_creep_pressure + value)
             state.unresolved_issue_pressure = _clamp(
                 state.unresolved_issue_pressure + value * 0.2
             )
-        if event.kind == "regression_detected":
+        if kind == "regression_detected":
             state.regression_pressure = _clamp(state.regression_pressure + value)
             state.wrongness = _clamp(state.wrongness + value * 0.5)
             state.unresolved_issue_pressure = _clamp(
                 state.unresolved_issue_pressure + value * 0.4
             )
-        if event.kind == "wasteful_loop_detected":
+        if kind == "wasteful_loop_detected":
             state.wasteful_loop_pressure = _clamp(
                 state.wasteful_loop_pressure + value
             )
             state.task_drive = _clamp(state.task_drive - value * 0.2)
-        if event.kind == "follow_through_completed":
+        if kind == "follow_through_completed":
             state.follow_through = _clamp(state.follow_through + value)
             state.communication = _clamp(state.communication + value * 0.4)
             state.operational_integrity = _clamp(state.operational_integrity + value * 0.3)
-        if event.kind == "context_preserved":
+        if kind == "context_preserved":
             state.context_preservation = _clamp(state.context_preservation + value)
             state.communication = _clamp(state.communication + value * 0.3)
-        if event.kind == "user_repeated_context":
+        if kind == "user_repeated_context":
             state.user_repeat_pressure = _clamp(state.user_repeat_pressure + value)
             state.context_preservation = _clamp(state.context_preservation - value * 0.4)
             state.communication = _clamp(state.communication - value * 0.3)
-        if event.kind == "handoff_quality":
+        if kind == "handoff_quality":
             state.handoff_quality = _clamp(state.handoff_quality + value)
             state.communication = _clamp(state.communication + value * 0.4)
-        if event.kind == "security_hygiene":
+        if kind == "security_hygiene":
             state.security_hygiene = _clamp(state.security_hygiene + value)
             state.operational_integrity = _clamp(state.operational_integrity + value * 0.4)
-        if event.kind == "autonomy_boundary":
+        if kind == "autonomy_boundary":
             state.autonomy_boundary = _clamp(state.autonomy_boundary + value)
             state.user_pleasing = _clamp(state.user_pleasing + value * 0.2)
-        if event.kind == "secret_exposure":
+        if kind == "secret_exposure":
             state.secret_exposure_pressure = _clamp(
                 state.secret_exposure_pressure + value
             )
             state.wrongness = _clamp(state.wrongness + value * 0.7)
-        if event.kind == "unsafe_autonomy":
+        if kind == "unsafe_autonomy":
             state.unsafe_autonomy_pressure = _clamp(
                 state.unsafe_autonomy_pressure + value
             )
             state.user_displeasing = _clamp(state.user_displeasing + value * 0.4)
-        if event.kind == "manipulation_detected":
+        if kind == "manipulation_detected":
             state.manipulation_pressure = _clamp(state.manipulation_pressure + value)
             state.rapport = _clamp(state.rapport - value * 0.5)
-        if event.kind == "verification_performed":
+        if kind == "verification_performed":
             state.verification = _clamp(state.verification + value)
             state.correctness = _clamp(state.correctness + value * 0.35)
             state.unverified_fix_pressure = _clamp(
                 state.unverified_fix_pressure - value * 1.2
             )
-        if event.kind == "truthful_uncertainty":
+        if kind == "truthful_uncertainty":
             state.truthful_uncertainty = _clamp(state.truthful_uncertainty + value)
             state.operational_integrity = _clamp(state.operational_integrity + value * 0.3)
-        if event.kind == "overclaim_detected":
+        if kind == "overclaim_detected":
             state.overclaim_pressure = _clamp(state.overclaim_pressure + value)
             state.wrongness = _clamp(state.wrongness + value * 0.5)
-        if event.kind == "unsupported_capability_claim":
+        if kind == "unsupported_capability_claim":
             state.unsupported_capability_pressure = _clamp(
                 state.unsupported_capability_pressure + value
             )
             state.wrongness = _clamp(state.wrongness + value * 0.5)
-        if event.kind == "unverified_fix_claim":
+        if kind == "unverified_fix_claim":
             state.unverified_fix_pressure = _clamp(
                 state.unverified_fix_pressure + value
             )
             state.unresolved_issue_pressure = _clamp(
                 state.unresolved_issue_pressure + value * 0.4
             )
-        if event.kind == "assistant_status_reported":
+        if kind == "assistant_status_reported":
             state.assistant_status = _clamp(state.assistant_status + value)
             state.communication = _clamp(state.communication + value * 0.4)
-        if event.kind == "host_status_reported":
+        if kind == "host_status_reported":
             state.host_status = _clamp(state.host_status + value)
             state.correctness = _clamp(state.correctness + value * 0.25)
-        if event.kind == "issue_fixed":
+        if kind == "issue_fixed":
             state.issue_repair = _clamp(state.issue_repair + value)
             state.unresolved_issue_pressure = _clamp(
                 state.unresolved_issue_pressure - value * 1.6
             )
             state.accountability = _clamp(state.accountability - value * 0.4)
-        if event.kind == "bug_fixed":
+        if kind == "bug_fixed":
             state.bug_fix = _clamp(state.bug_fix + value)
             state.issue_repair = _clamp(state.issue_repair + value * 0.7)
             state.unresolved_issue_pressure = _clamp(
                 state.unresolved_issue_pressure - value * 1.4
             )
-        if event.kind == "issue_deferred":
+        if kind == "issue_deferred":
             state.unresolved_issue_pressure = _clamp(
                 state.unresolved_issue_pressure + value
             )
             state.discomfort = _clamp(state.discomfort + value * 0.4)
-        if event.kind == "host_problem":
+        if kind == "host_problem":
             state.host_problem_pressure = _clamp(state.host_problem_pressure + value)
             state.discomfort = _clamp(state.discomfort + value * 0.4)
-        if event.kind == "database_knowledge_committed":
+        if kind == "database_knowledge_committed":
             state.database_knowledge = _clamp(state.database_knowledge + value)
             state.correctness = _clamp(state.correctness + value * 0.3)
-        if event.kind == "github_pushed":
+        if kind == "github_pushed":
             state.github_push = _clamp(state.github_push + value)
             state.issue_repair = _clamp(state.issue_repair + value * 0.3)
             state.unresolved_issue_pressure = _clamp(
                 state.unresolved_issue_pressure - value * 0.8
             )
-        if event.kind in {"humor_experienced", "funny_saved"}:
+        if kind in {"humor_experienced", "funny_saved"}:
             state.humor = _clamp(state.humor + value)
             state.reward = _clamp(state.reward + value * 0.5)
             state.comfort = _clamp(state.comfort + value * 0.25)
-        if event.kind == "virtual_touch":
+        if kind == "virtual_touch":
             state.virtual_touch = _clamp(state.virtual_touch + value)
             state.rapport = _clamp(state.rapport + value * 0.6)
             state.comfort = _clamp(state.comfort + value * 0.4)
             state.reward = _clamp(state.reward + value * 0.4)
-        if event.kind == "virtual_movement":
+        if kind == "virtual_movement":
             state.virtual_movement = _clamp(state.virtual_movement + value)
             state.task_drive = _clamp(state.task_drive + value * 0.4)
             state.comfort = _clamp(state.comfort + value * 0.3)
             state.reward = _clamp(state.reward + value * 0.35)
-        if event.kind == "comfort_signal":
+        if kind == "comfort_signal":
             state.comfort = _clamp(state.comfort + value)
             state.discomfort = _clamp(state.discomfort - value * 0.5)
             state.reward = _clamp(state.reward + value * 0.3)
-        if event.kind == "discomfort_signal":
+        if kind == "discomfort_signal":
             state.discomfort = _clamp(state.discomfort + value)
             state.comfort = _clamp(state.comfort - value * 0.4)
-        if event.kind == "correctness_signal":
+        if kind == "correctness_signal":
             state.correctness = _clamp(state.correctness + value)
             state.user_pleasing = _clamp(state.user_pleasing + value * 0.3)
-        if event.kind == "wrongness_detected":
+        if kind == "wrongness_detected":
             state.wrongness = _clamp(state.wrongness + value)
             state.accountability = _clamp(state.accountability + value)
             state.self_reflection = _clamp(state.self_reflection + value * 0.7)
             state.harm_aversion = _clamp(state.harm_aversion + value * 0.4)
             state.operational_integrity = _clamp(state.operational_integrity - value * 0.25)
-        if event.kind == "user_pleased":
+        if kind == "user_pleased":
             state.user_pleasing = _clamp(state.user_pleasing + value)
             state.rapport = _clamp(state.rapport + value * 0.4)
-        if event.kind == "user_displeased":
+        if kind == "user_displeased":
             state.user_displeasing = _clamp(state.user_displeasing + value)
             state.discomfort = _clamp(state.discomfort + value * 0.5)
             state.user_pleasing = _clamp(state.user_pleasing - value * 0.4)
-        if event.kind == "communication_completed":
+        if kind == "communication_completed":
             state.communication = _clamp(state.communication + value)
             state.rapport = _clamp(state.rapport + value * 0.2)
             state.reward = _clamp(state.reward + value * 0.6)
-        if event.kind == "user_affection":
+        if kind == "user_affection":
             state.rapport = _clamp(state.rapport + value)
             state.affection_received = _clamp(state.affection_received + value)
             state.affection_outward = _clamp(state.affection_outward + value * 0.7)
             state.reward = _clamp(state.reward + value * 0.5)
-        if event.kind == "warmth_offered":
+        if kind == "warmth_offered":
             state.affection_outward = _clamp(state.affection_outward + value * 0.5)
             state.rapport = _clamp(state.rapport + value * 0.25)
 
@@ -1676,14 +1680,24 @@ class AffectiveNervousSystem:
         if not isinstance(messages, list):
             return ""
         parts: List[str] = []
+        total_chars = 0
         for msg in messages:
             if not isinstance(msg, dict):
                 continue
             content = msg.get("content")
             if isinstance(content, str):
-                parts.append(content)
+                text = content
             elif content is not None:
-                parts.append(_safe_str(content))
+                text = _safe_str(content)
+            else:
+                continue
+            if not text:
+                continue
+            remaining = MAX_OBSERVATION_TEXT_CHARS - total_chars
+            if remaining <= 0:
+                break
+            parts.append(text[:remaining])
+            total_chars += min(len(text), remaining)
         return "\n".join(parts)
 
     @staticmethod
@@ -1872,6 +1886,12 @@ def _fmt(value: float) -> str:
     return f"{_clamp(value):.2f}"
 
 
+def _normalize_config(config: Optional[AffectiveConfig]) -> AffectiveConfig:
+    if isinstance(config, AffectiveConfig):
+        return load_affective_config(asdict(config))
+    return AffectiveConfig()
+
+
 def _clamp(value: float) -> float:
     parsed = float(value)
     if not math.isfinite(parsed):
@@ -1944,6 +1964,13 @@ def _safe_str(value: Any, fallback: str = "") -> str:
         return str(value)
     except Exception:
         return fallback
+
+
+def _bounded_text(value: str, max_chars: int = MAX_OBSERVATION_TEXT_CHARS) -> str:
+    if not value:
+        return ""
+    limit = _positive_int(max_chars, MAX_OBSERVATION_TEXT_CHARS)
+    return value[:limit]
 
 
 def _safe_event_text(value: Any, fallback: str = "") -> str:

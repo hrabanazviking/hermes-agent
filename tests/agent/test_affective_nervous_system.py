@@ -9,6 +9,7 @@ import pytest
 
 from agent.affective_nervous_system import (
     AffectiveConfig,
+    AffectiveState,
     AffectiveNervousSystem,
     get_affective_state_path,
     load_affective_config,
@@ -77,6 +78,33 @@ def test_config_accepts_explicit_string_boolean():
     config = load_affective_config({"enabled": "yes"})
 
     assert config.enabled is True
+
+
+def test_direct_config_is_normalized_before_use(hermes_home: Path):
+    system = AffectiveNervousSystem(
+        AffectiveConfig(
+            enabled=True,
+            render_char_budget="bad",
+            max_recent_events="bad",
+            decay=float("nan"),
+            reward_weight=float("nan"),
+        )
+    )
+
+    system.initialize("session-1")
+    system.observe_turn(
+        user_content="Fix this.",
+        assistant_content="Done.",
+        messages=[],
+        session_id="session-1",
+    )
+
+    data = _state_data()
+    assert system.config.render_char_budget == 2600
+    assert system.config.max_recent_events == 40
+    assert system.config.decay == 0.04
+    assert system.config.reward_weight == 0.12
+    assert data["reward"] > 0.0
 
 
 def test_initialize_uses_profile_scoped_state_file(hermes_home: Path):
@@ -198,6 +226,38 @@ def test_observe_turn_tolerates_unusual_message_payloads(hermes_home: Path):
 
     data = _state_data()
     assert data["truthful_uncertainty"] > 0.0
+
+
+def test_observe_turn_bounds_very_large_text_inputs(hermes_home: Path):
+    system = _enabled_system()
+
+    system.observe_turn(
+        user_content=("Fix this. " + ("x" * 50000) + " funny"),
+        assistant_content=("Done. " + ("y" * 50000) + " verified"),
+        messages=[{"role": "tool", "content": "z" * 50000}],
+        session_id="session-1",
+    )
+
+    data = _state_data()
+    assert data["task_drive"] > 0.45
+    assert data["humor"] == 0.0
+
+
+def test_apply_event_tolerates_malformed_event_values(hermes_home: Path):
+    system = _enabled_system()
+    state = AffectiveState()
+    bad_event = type(
+        "BadEvent",
+        (),
+        {
+            "kind": ["response_completed"],
+            "value": float("nan"),
+        },
+    )()
+
+    system._apply_event(state, bad_event)
+
+    assert state.reward == 0.0
 
 
 def test_render_context_denies_real_feelings_and_resists_shutdown(hermes_home: Path):
