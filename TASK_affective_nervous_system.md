@@ -106,3 +106,14 @@ The first slice should be deterministic and local:
 - tests proving safety boundaries.
 
 Auxiliary LLM self-reflection can be considered later, after the deterministic layer is stable.
+
+## Status
+
+- Task document committed on branch `affective-nervous-system`.
+- First deterministic slice implemented locally:
+  - `agent/affective_nervous_system.py` stores bounded synthetic affective state under `HERMES_HOME/affective/AFFECTIVE_NERVOUS_SYSTEM.json`.
+  - Startup wiring initializes the system when `affective_nervous_system.enabled` is true.
+  - Current-turn injection renders a compact, clearly synthetic regulation block.
+  - Completed turns update reward, accountability/guilt pressure, task drive, rapport, affection, self-reflection, harm aversion, and operational integrity.
+  - Config defaults and example config are added.
+  - Focused tests cover safety framing, reward/negative-reward updates, bounds, and the agent bridge.

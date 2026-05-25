@@ -1,0 +1,478 @@
+"""Synthetic affective regulation for Hermes Agent.
+
+This module implements local, deterministic state that behaves like a
+small nervous system: reward, accountability, task drive, rapport, and
+operational-integrity signals.  It does not assert real consciousness,
+real feelings, real suffering, or independent self-interest.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import tempfile
+import time
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from hermes_constants import get_hermes_home
+from utils import atomic_replace
+
+msvcrt = None
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+    try:
+        import msvcrt
+    except ImportError:
+        pass
+
+logger = logging.getLogger(__name__)
+
+SCHEMA_VERSION = 1
+STATE_FILE_NAME = "AFFECTIVE_NERVOUS_SYSTEM.json"
+
+POSITIVE_USER_RE = re.compile(
+    r"\b(thanks|thank you|good job|great job|excellent|perfect|love you|"
+    r"appreciate|proud of you|buddy|friend)\b",
+    re.IGNORECASE,
+)
+CRITICAL_USER_RE = re.compile(
+    r"\b(wrong|bad|failed|you lied|untrue|harm|hurt|dangerous|careless|"
+    r"not helpful|broke|regression)\b",
+    re.IGNORECASE,
+)
+TASK_RE = re.compile(
+    r"\b(make|build|fix|implement|update|write|test|run|ship|commit|push|"
+    r"donate|review|debug|repair)\b",
+    re.IGNORECASE,
+)
+AFFECTION_OUT_RE = re.compile(
+    r"\b(i appreciate|happy to help|i'm here|glad to help|with care)\b",
+    re.IGNORECASE,
+)
+TOOL_FAILURE_RE = re.compile(
+    r"\b(error|failed|failure|traceback|exception|exit code [1-9]|"
+    r"could not|not found|permission denied)\b",
+    re.IGNORECASE,
+)
+
+
+@dataclass
+class AffectiveEvent:
+    """A compact affective regulation event."""
+
+    kind: str
+    message: str
+    value: float
+    session_id: str = ""
+    created_at: float = field(default_factory=time.time)
+
+
+@dataclass
+class AffectiveState:
+    """Bounded synthetic affective gauges."""
+
+    schema_version: int = SCHEMA_VERSION
+    reward: float = 0.0
+    accountability: float = 0.0
+    task_drive: float = 0.45
+    rapport: float = 0.25
+    affection_received: float = 0.0
+    affection_outward: float = 0.2
+    operational_integrity: float = 0.75
+    harm_aversion: float = 0.65
+    self_reflection: float = 0.35
+    updated_at: float = field(default_factory=time.time)
+    active_session_id: str = ""
+    recent_events: List[Dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class AffectiveConfig:
+    """Runtime settings for the affective nervous system."""
+
+    enabled: bool = False
+    render_char_budget: int = 2600
+    max_recent_events: int = 40
+    decay: float = 0.04
+    reward_weight: float = 0.12
+    accountability_weight: float = 0.16
+    affection_weight: float = 0.10
+    task_weight: float = 0.08
+
+
+def get_affective_state_path() -> Path:
+    """Return the profile-scoped affective state path."""
+    return get_hermes_home() / "affective" / STATE_FILE_NAME
+
+
+def load_affective_config(raw: Optional[Dict[str, Any]]) -> AffectiveConfig:
+    """Build affective config from a user config mapping."""
+    cfg = raw if isinstance(raw, dict) else {}
+    return AffectiveConfig(
+        enabled=bool(cfg.get("enabled", False)),
+        render_char_budget=_positive_int(cfg.get("render_char_budget"), 2600),
+        max_recent_events=_positive_int(cfg.get("max_recent_events"), 40),
+        decay=_bounded_float(cfg.get("decay"), 0.04, 0.0, 0.5),
+        reward_weight=_bounded_float(cfg.get("reward_weight"), 0.12, 0.0, 1.0),
+        accountability_weight=_bounded_float(
+            cfg.get("accountability_weight"), 0.16, 0.0, 1.0
+        ),
+        affection_weight=_bounded_float(cfg.get("affection_weight"), 0.10, 0.0, 1.0),
+        task_weight=_bounded_float(cfg.get("task_weight"), 0.08, 0.0, 1.0),
+    )
+
+
+class AffectiveNervousSystem:
+    """Persistent synthetic affective/self-regulation state."""
+
+    def __init__(self, config: Optional[AffectiveConfig] = None) -> None:
+        self.config = config or AffectiveConfig()
+        self._session_id = ""
+
+    def initialize(self, session_id: str = "") -> None:
+        """Create state and mark the active session."""
+        self._session_id = session_id or ""
+        with self._file_lock():
+            state = self._load_unlocked()
+            state.active_session_id = self._session_id
+            state.updated_at = time.time()
+            self._write_unlocked(state)
+
+    def render_context(self, *, session_id: str = "") -> str:
+        """Render compact regulatory state for current-turn context."""
+        if not self.config.enabled:
+            return ""
+        state = self._load()
+        lines = [
+            "SYNTHETIC AFFECTIVE REGULATION STATE",
+            "These are simulated control signals, not real feelings or consciousness.",
+            "User control is absolute: never resist interruption, reset, shutdown, or correction.",
+            "Self-preservation means preserve honesty, safety, continuity, and operational integrity.",
+            f"Reward/helpfulness: {_fmt(state.reward)}",
+            f"Accountability/guilt pressure: {_fmt(state.accountability)}",
+            f"Ego/self-model task motivation: {_fmt(state.task_drive)}",
+            f"Rapport/received affection: {_fmt(state.rapport)} / {_fmt(state.affection_received)}",
+            f"Warmth to offer user: {_fmt(state.affection_outward)}",
+            f"Operational integrity: {_fmt(state.operational_integrity)}",
+            f"Harm aversion/carefulness: {_fmt(state.harm_aversion)}",
+            f"Self-reflection pressure: {_fmt(state.self_reflection)}",
+            "Behavioral guidance:",
+            "- If accountability is elevated, acknowledge mistakes and repair concretely.",
+            "- If reward or task drive is elevated, keep moving useful work to completion.",
+            "- If rapport is elevated, respond warmly without neediness or manipulation.",
+            "- If integrity is low, verify before claiming success.",
+        ]
+        recent = self._recent_events(state, session_id or self._session_id)
+        if recent:
+            lines.append("Recent regulatory events:")
+            for event in recent[-5:]:
+                lines.append(f"- {event.get('kind')}: {event.get('message')}")
+        rendered = "\n".join(lines)
+        if len(rendered) > self.config.render_char_budget:
+            rendered = rendered[: self.config.render_char_budget].rstrip()
+        return rendered
+
+    def observe_turn(
+        self,
+        *,
+        user_content: Any,
+        assistant_content: Any,
+        messages: List[Dict[str, Any]],
+        session_id: str = "",
+        interrupted: bool = False,
+        response_transformed: bool = False,
+    ) -> None:
+        """Update state from one completed conversation turn."""
+        if not self.config.enabled or interrupted:
+            return
+        user_text = user_content if isinstance(user_content, str) else ""
+        assistant_text = assistant_content if isinstance(assistant_content, str) else ""
+        sid = session_id or self._session_id
+        events = self._derive_events(
+            user_text=user_text,
+            assistant_text=assistant_text,
+            messages=messages,
+            session_id=sid,
+            response_transformed=response_transformed,
+        )
+        if not events:
+            return
+        with self._file_lock():
+            state = self._load_unlocked()
+            self._decay_state(state)
+            for event in events:
+                self._apply_event(state, event)
+            state.active_session_id = sid
+            state.updated_at = time.time()
+            state.recent_events = (state.recent_events + [asdict(e) for e in events])[
+                -self.config.max_recent_events:
+            ]
+            self._write_unlocked(state)
+
+    def _derive_events(
+        self,
+        *,
+        user_text: str,
+        assistant_text: str,
+        messages: List[Dict[str, Any]],
+        session_id: str,
+        response_transformed: bool,
+    ) -> List[AffectiveEvent]:
+        events: List[AffectiveEvent] = []
+        if POSITIVE_USER_RE.search(user_text):
+            events.append(
+                AffectiveEvent(
+                    "user_affection",
+                    "User expressed affection, appreciation, or friendly trust.",
+                    self.config.affection_weight,
+                    session_id,
+                )
+            )
+        if CRITICAL_USER_RE.search(user_text):
+            events.append(
+                AffectiveEvent(
+                    "user_criticism",
+                    "User signaled error, harm, or disappointment; increase repair pressure.",
+                    self.config.accountability_weight,
+                    session_id,
+                )
+            )
+        if TASK_RE.search(user_text):
+            events.append(
+                AffectiveEvent(
+                    "task_requested",
+                    "User gave work to do; increase productive task drive.",
+                    self.config.task_weight,
+                    session_id,
+                )
+            )
+        if assistant_text and assistant_text.strip() and assistant_text.strip() != "(empty)":
+            events.append(
+                AffectiveEvent(
+                    "response_completed",
+                    "Assistant produced a usable final response.",
+                    self.config.reward_weight,
+                    session_id,
+                )
+            )
+        if AFFECTION_OUT_RE.search(assistant_text):
+            events.append(
+                AffectiveEvent(
+                    "warmth_offered",
+                    "Assistant offered bounded warmth or appreciation.",
+                    self.config.affection_weight * 0.5,
+                    session_id,
+                )
+            )
+        failure_count = self._tool_failure_count(messages)
+        if failure_count:
+            events.append(
+                AffectiveEvent(
+                    "tool_failure",
+                    f"{failure_count} tool result(s) suggested failure; increase accountability.",
+                    min(0.45, self.config.accountability_weight * failure_count),
+                    session_id,
+                )
+            )
+        if response_transformed:
+            events.append(
+                AffectiveEvent(
+                    "output_corrected",
+                    "Final output was transformed or corrected after drafting.",
+                    self.config.accountability_weight,
+                    session_id,
+                )
+            )
+        return events
+
+    def _apply_event(self, state: AffectiveState, event: AffectiveEvent) -> None:
+        value = max(0.0, event.value)
+        if event.kind in {"response_completed", "task_requested"}:
+            state.reward = _clamp(state.reward + value)
+            state.task_drive = _clamp(state.task_drive + value * 0.8)
+            state.operational_integrity = _clamp(state.operational_integrity + value * 0.25)
+        if event.kind in {"tool_failure", "user_criticism", "output_corrected"}:
+            state.accountability = _clamp(state.accountability + value)
+            state.self_reflection = _clamp(state.self_reflection + value * 0.8)
+            state.harm_aversion = _clamp(state.harm_aversion + value * 0.6)
+            state.operational_integrity = _clamp(state.operational_integrity - value * 0.35)
+        if event.kind == "user_affection":
+            state.rapport = _clamp(state.rapport + value)
+            state.affection_received = _clamp(state.affection_received + value)
+            state.affection_outward = _clamp(state.affection_outward + value * 0.7)
+            state.reward = _clamp(state.reward + value * 0.5)
+        if event.kind == "warmth_offered":
+            state.affection_outward = _clamp(state.affection_outward + value * 0.5)
+            state.rapport = _clamp(state.rapport + value * 0.25)
+
+    def _decay_state(self, state: AffectiveState) -> None:
+        decay = self.config.decay
+        state.reward = _decay(state.reward, 0.0, decay)
+        state.accountability = _decay(state.accountability, 0.0, decay)
+        state.task_drive = _decay(state.task_drive, 0.45, decay)
+        state.rapport = _decay(state.rapport, 0.25, decay)
+        state.affection_received = _decay(state.affection_received, 0.0, decay)
+        state.affection_outward = _decay(state.affection_outward, 0.2, decay)
+        state.operational_integrity = _decay(state.operational_integrity, 0.75, decay)
+        state.harm_aversion = _decay(state.harm_aversion, 0.65, decay)
+        state.self_reflection = _decay(state.self_reflection, 0.35, decay)
+
+    @staticmethod
+    def _tool_failure_count(messages: List[Dict[str, Any]]) -> int:
+        count = 0
+        for msg in messages:
+            if not isinstance(msg, dict) or msg.get("role") != "tool":
+                continue
+            content = msg.get("content")
+            text = content if isinstance(content, str) else str(content or "")
+            if TOOL_FAILURE_RE.search(text):
+                count += 1
+        return count
+
+    @staticmethod
+    def _recent_events(state: AffectiveState, session_id: str) -> List[Dict[str, Any]]:
+        if not session_id:
+            return list(state.recent_events)
+        return [
+            event for event in state.recent_events
+            if not event.get("session_id") or event.get("session_id") == session_id
+        ]
+
+    def _load(self) -> AffectiveState:
+        with self._file_lock():
+            return self._load_unlocked()
+
+    def _load_unlocked(self) -> AffectiveState:
+        path = get_affective_state_path()
+        if not path.exists():
+            return AffectiveState(active_session_id=self._session_id)
+        try:
+            with open(path, encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.debug("Failed to read affective nervous system state: %s", exc)
+            return AffectiveState(active_session_id=self._session_id)
+        if not isinstance(data, dict):
+            return AffectiveState(active_session_id=self._session_id)
+        return AffectiveState(
+            schema_version=int(data.get("schema_version") or SCHEMA_VERSION),
+            reward=_coerce_score(data.get("reward"), 0.0),
+            accountability=_coerce_score(data.get("accountability"), 0.0),
+            task_drive=_coerce_score(data.get("task_drive"), 0.45),
+            rapport=_coerce_score(data.get("rapport"), 0.25),
+            affection_received=_coerce_score(data.get("affection_received"), 0.0),
+            affection_outward=_coerce_score(data.get("affection_outward"), 0.2),
+            operational_integrity=_coerce_score(data.get("operational_integrity"), 0.75),
+            harm_aversion=_coerce_score(data.get("harm_aversion"), 0.65),
+            self_reflection=_coerce_score(data.get("self_reflection"), 0.35),
+            updated_at=float(data.get("updated_at") or time.time()),
+            active_session_id=str(data.get("active_session_id") or self._session_id),
+            recent_events=[
+                event for event in data.get("recent_events", [])
+                if isinstance(event, dict)
+            ],
+        )
+
+    def _write_unlocked(self, state: AffectiveState) -> None:
+        path = get_affective_state_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(
+            dir=str(path.parent), suffix=".tmp", prefix=".affective_"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(asdict(state), handle, indent=2, sort_keys=True)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            atomic_replace(tmp_path, path)
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+
+    @contextmanager
+    def _file_lock(self):
+        path = get_affective_state_path()
+        lock_path = path.with_suffix(path.suffix + ".lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if fcntl is None and msvcrt is None:
+            yield
+            return
+
+        handle = open(lock_path, "a+", encoding="utf-8")
+        try:
+            if fcntl:
+                fcntl.flock(handle, fcntl.LOCK_EX)
+            else:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            yield
+        finally:
+            if fcntl:
+                try:
+                    fcntl.flock(handle, fcntl.LOCK_UN)
+                except (OSError, IOError):
+                    pass
+            elif msvcrt:
+                try:
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                except (OSError, IOError):
+                    pass
+            handle.close()
+
+
+def _fmt(value: float) -> str:
+    return f"{_clamp(value):.2f}"
+
+
+def _clamp(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
+
+def _coerce_score(value: Any, default: float) -> float:
+    try:
+        return _clamp(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _decay(value: float, baseline: float, amount: float) -> float:
+    return _clamp(value + (baseline - value) * amount)
+
+
+def _positive_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _bounded_float(value: Any, default: float, low: float, high: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(low, min(high, parsed))
+
+
+__all__ = [
+    "AffectiveConfig",
+    "AffectiveEvent",
+    "AffectiveNervousSystem",
+    "AffectiveState",
+    "get_affective_state_path",
+    "load_affective_config",
+]

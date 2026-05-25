@@ -460,6 +460,23 @@ prompt_caching:
 #                           #   enable_thinking: false
 
 # =============================================================================
+# Affective Nervous System
+# =============================================================================
+# Optional synthetic affective regulation: local deterministic reward,
+# accountability, rapport, self-reflection, and operational-integrity signals.
+# These are simulated control signals, not real feelings or consciousness.
+#
+affective_nervous_system:
+  enabled: false
+  render_char_budget: 2600
+  max_recent_events: 40
+  decay: 0.04
+  reward_weight: 0.12
+  accountability_weight: 0.16
+  affection_weight: 0.10
+  task_weight: 0.08
+
+# =============================================================================
 # Persistent Memory
 # =============================================================================
 # Bounded curated memory injected into the system prompt every session.

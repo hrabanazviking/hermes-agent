@@ -1057,6 +1057,7 @@ def init_agent(
     # Persistent memory (MEMORY.md + USER.md) -- loaded from disk
     agent._memory_store = None
     agent._present_state_memory = None
+    agent._affective_nervous_system = None
     agent._memory_enabled = False
     agent._user_profile_enabled = False
     agent._memory_nudge_interval = 10
@@ -1094,6 +1095,25 @@ def init_agent(
         except Exception as _psm_err:
             _ra().logger.debug("Present-state memory init failed: %s", _psm_err)
             agent._present_state_memory = None
+
+    if not skip_memory:
+        try:
+            from agent.affective_nervous_system import (
+                AffectiveNervousSystem,
+                load_affective_config,
+            )
+
+            affective_config = load_affective_config(
+                _agent_cfg.get("affective_nervous_system", {}) if _agent_cfg else {}
+            )
+            if affective_config.enabled:
+                agent._affective_nervous_system = AffectiveNervousSystem(
+                    affective_config
+                )
+                agent._affective_nervous_system.initialize(agent.session_id or "")
+        except Exception as _ans_err:
+            _ra().logger.debug("Affective nervous system init failed: %s", _ans_err)
+            agent._affective_nervous_system = None
     
 
 

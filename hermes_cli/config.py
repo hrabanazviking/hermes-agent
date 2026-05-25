@@ -1200,6 +1200,19 @@ DEFAULT_CONFIG = {
         "engine": "compressor",
     },
 
+    # Synthetic affective regulation -- optional local state for reward,
+    # accountability, rapport, self-reflection, and operational integrity.
+    "affective_nervous_system": {
+        "enabled": False,
+        "render_char_budget": 2600,
+        "max_recent_events": 40,
+        "decay": 0.04,
+        "reward_weight": 0.12,
+        "accountability_weight": 0.16,
+        "affection_weight": 0.10,
+        "task_weight": 0.08,
+    },
+
     # Persistent memory -- bounded curated memory injected into system prompt
     "memory": {
         "memory_enabled": True,
