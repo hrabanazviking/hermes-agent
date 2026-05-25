@@ -272,6 +272,20 @@ Safety boundary:
   silence or evasiveness. Honest uncertainty is rewarded only when it reduces
   false certainty.
 
+Status:
+
+- Implemented schema version 5 with gauges for verification, truthful
+  uncertainty, overclaim pressure, unsupported capability pressure, and
+  unverified-fix pressure.
+- Verification reward is blocked when tool evidence indicates failure.
+- Overclaim pressure increases when success is claimed despite failed tool
+  output.
+- Unsupported capability pressure increases when concrete tool/file/database or
+  GitHub access is claimed without tool evidence.
+- Unverified-fix pressure increases when fixes are claimed without verification
+  and decreases when verification evidence appears later.
+- Added config weights, example config entries, and focused tests.
+
 ### Phase 2: Secrets, Safety, and Autonomy Boundaries
 
 Target channels:

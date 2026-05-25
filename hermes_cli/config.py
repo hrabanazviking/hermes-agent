@@ -1229,6 +1229,11 @@ DEFAULT_CONFIG = {
         "database_knowledge_weight": 0.10,
         "bug_fix_weight": 0.12,
         "github_push_weight": 0.10,
+        "verification_weight": 0.11,
+        "truthful_uncertainty_weight": 0.08,
+        "overclaim_weight": 0.18,
+        "unsupported_capability_weight": 0.18,
+        "unverified_fix_weight": 0.14,
     },
 
     # Persistent memory -- bounded curated memory injected into system prompt

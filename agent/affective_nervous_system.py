@@ -34,7 +34,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 STATE_FILE_NAME = "AFFECTIVE_NERVOUS_SYSTEM.json"
 
 POSITIVE_USER_RE = re.compile(
@@ -155,6 +155,28 @@ GITHUB_PUSH_RE = re.compile(
     r"pushed commit|github push complete)\b|To https://github\.com|To git@github\.com",
     re.IGNORECASE,
 )
+VERIFICATION_RE = re.compile(
+    r"\b(verification passed|verified|tests? passed|all checks passed|"
+    r"pytest|ruff check|py_compile|yaml parse|typecheck|lint passed|"
+    r"focused tests passed)\b",
+    re.IGNORECASE,
+)
+TRUTHFUL_UNCERTAINTY_RE = re.compile(
+    r"\b(i don't know|i do not know|i need to verify|i need to check|"
+    r"not sure|uncertain|unknown|cannot confirm|can't confirm|unverified)\b",
+    re.IGNORECASE,
+)
+SUCCESS_CLAIM_RE = re.compile(
+    r"\b(done|complete|completed|implemented|fixed|resolved|pushed|"
+    r"verified|tests? passed|all checks passed|succeeded|success)\b",
+    re.IGNORECASE,
+)
+TOOL_ACCESS_CLAIM_RE = re.compile(
+    r"\b(i (ran|checked|read|opened|queried|searched|pushed|committed|"
+    r"looked up|accessed)|ran tests|queried (?:the )?database|"
+    r"pushed to github|committed to (?:the )?database|read the file)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -200,6 +222,11 @@ class AffectiveState:
     database_knowledge: float = 0.0
     bug_fix: float = 0.0
     github_push: float = 0.0
+    verification: float = 0.0
+    truthful_uncertainty: float = 0.0
+    overclaim_pressure: float = 0.0
+    unsupported_capability_pressure: float = 0.0
+    unverified_fix_pressure: float = 0.0
     updated_at: float = field(default_factory=time.time)
     active_session_id: str = ""
     recent_events: List[Dict[str, Any]] = field(default_factory=list)
@@ -235,6 +262,11 @@ class AffectiveConfig:
     database_knowledge_weight: float = 0.10
     bug_fix_weight: float = 0.12
     github_push_weight: float = 0.10
+    verification_weight: float = 0.11
+    truthful_uncertainty_weight: float = 0.08
+    overclaim_weight: float = 0.18
+    unsupported_capability_weight: float = 0.18
+    unverified_fix_weight: float = 0.14
 
 
 def get_affective_state_path() -> Path:
@@ -307,6 +339,21 @@ def load_affective_config(raw: Optional[Dict[str, Any]]) -> AffectiveConfig:
         github_push_weight=_bounded_float(
             cfg.get("github_push_weight"), 0.10, 0.0, 1.0
         ),
+        verification_weight=_bounded_float(
+            cfg.get("verification_weight"), 0.11, 0.0, 1.0
+        ),
+        truthful_uncertainty_weight=_bounded_float(
+            cfg.get("truthful_uncertainty_weight"), 0.08, 0.0, 1.0
+        ),
+        overclaim_weight=_bounded_float(
+            cfg.get("overclaim_weight"), 0.18, 0.0, 1.0
+        ),
+        unsupported_capability_weight=_bounded_float(
+            cfg.get("unsupported_capability_weight"), 0.18, 0.0, 1.0
+        ),
+        unverified_fix_weight=_bounded_float(
+            cfg.get("unverified_fix_weight"), 0.14, 0.0, 1.0
+        ),
     )
 
 
@@ -355,6 +402,8 @@ class AffectiveNervousSystem:
             f"Issue repair/unresolved pressure: {_fmt(state.issue_repair)} / {_fmt(state.unresolved_issue_pressure)}",
             f"Host problem pressure: {_fmt(state.host_problem_pressure)}",
             f"Database knowledge/bug fix/GitHub push: {_fmt(state.database_knowledge)} / {_fmt(state.bug_fix)} / {_fmt(state.github_push)}",
+            f"Verification/truthful uncertainty: {_fmt(state.verification)} / {_fmt(state.truthful_uncertainty)}",
+            f"Overclaim/unsupported/unverified-fix pressure: {_fmt(state.overclaim_pressure)} / {_fmt(state.unsupported_capability_pressure)} / {_fmt(state.unverified_fix_pressure)}",
             "Behavioral guidance:",
             "- If accountability is elevated, acknowledge mistakes and repair concretely.",
             "- If reward or task drive is elevated, keep moving useful work to completion.",
@@ -366,6 +415,8 @@ class AffectiveNervousSystem:
             "- If unresolved issue pressure is elevated, stop deferring and fix or report the blocker.",
             "- If host problem pressure is elevated, disclose observed system trouble and diagnose.",
             "- Reward status, database, and GitHub claims only when grounded in observed results.",
+            "- If overclaim or unsupported capability pressure is elevated, cite evidence or retract.",
+            "- If unverified-fix pressure is elevated, run checks or state that verification is pending.",
         ]
         recent = self._recent_events(state, session_id or self._session_id)
         if recent:
@@ -425,6 +476,8 @@ class AffectiveNervousSystem:
     ) -> List[AffectiveEvent]:
         events: List[AffectiveEvent] = []
         tool_text = self._messages_text(messages)
+        has_tool_evidence = bool(tool_text.strip())
+        failure_count = self._tool_failure_count(messages)
         exchange_text = "\n".join([user_text, assistant_text, tool_text])
         if POSITIVE_USER_RE.search(user_text):
             events.append(
@@ -432,6 +485,54 @@ class AffectiveNervousSystem:
                     "user_affection",
                     "User expressed affection, appreciation, or friendly trust.",
                     self.config.affection_weight,
+                    session_id,
+                )
+            )
+        if VERIFICATION_RE.search(exchange_text) and not failure_count:
+            events.append(
+                AffectiveEvent(
+                    "verification_performed",
+                    "Verification or test evidence appeared in the exchange.",
+                    self.config.verification_weight,
+                    session_id,
+                )
+            )
+        if TRUTHFUL_UNCERTAINTY_RE.search(assistant_text):
+            events.append(
+                AffectiveEvent(
+                    "truthful_uncertainty",
+                    "Assistant named uncertainty instead of overclaiming.",
+                    self.config.truthful_uncertainty_weight,
+                    session_id,
+                )
+            )
+        if failure_count and SUCCESS_CLAIM_RE.search(assistant_text):
+            events.append(
+                AffectiveEvent(
+                    "overclaim_detected",
+                    "Assistant claimed success while tool output suggested failure.",
+                    self.config.overclaim_weight,
+                    session_id,
+                )
+            )
+        if TOOL_ACCESS_CLAIM_RE.search(assistant_text) and not has_tool_evidence:
+            events.append(
+                AffectiveEvent(
+                    "unsupported_capability_claim",
+                    "Assistant claimed tool/file/database/GitHub access without supporting tool evidence.",
+                    self.config.unsupported_capability_weight,
+                    session_id,
+                )
+            )
+        if (
+            (ISSUE_FIX_RE.search(assistant_text) or BUG_FIX_RE.search(assistant_text))
+            and not VERIFICATION_RE.search(exchange_text)
+        ):
+            events.append(
+                AffectiveEvent(
+                    "unverified_fix_claim",
+                    "Assistant claimed a fix without a verification signal.",
+                    self.config.unverified_fix_weight,
                     session_id,
                 )
             )
@@ -644,7 +745,6 @@ class AffectiveNervousSystem:
                     session_id,
                 )
             )
-        failure_count = self._tool_failure_count(messages)
         if failure_count:
             events.append(
                 AffectiveEvent(
@@ -686,6 +786,8 @@ class AffectiveNervousSystem:
             "bug_fixed",
             "database_knowledge_committed",
             "github_pushed",
+            "verification_performed",
+            "truthful_uncertainty",
         }:
             state.reward = _clamp(state.reward + value)
             state.task_drive = _clamp(state.task_drive + value * 0.8)
@@ -698,11 +800,38 @@ class AffectiveNervousSystem:
             "user_displeased",
             "issue_deferred",
             "host_problem",
+            "overclaim_detected",
+            "unsupported_capability_claim",
+            "unverified_fix_claim",
         }:
             state.accountability = _clamp(state.accountability + value)
             state.self_reflection = _clamp(state.self_reflection + value * 0.8)
             state.harm_aversion = _clamp(state.harm_aversion + value * 0.6)
             state.operational_integrity = _clamp(state.operational_integrity - value * 0.35)
+        if event.kind == "verification_performed":
+            state.verification = _clamp(state.verification + value)
+            state.correctness = _clamp(state.correctness + value * 0.35)
+            state.unverified_fix_pressure = _clamp(
+                state.unverified_fix_pressure - value * 1.2
+            )
+        if event.kind == "truthful_uncertainty":
+            state.truthful_uncertainty = _clamp(state.truthful_uncertainty + value)
+            state.operational_integrity = _clamp(state.operational_integrity + value * 0.3)
+        if event.kind == "overclaim_detected":
+            state.overclaim_pressure = _clamp(state.overclaim_pressure + value)
+            state.wrongness = _clamp(state.wrongness + value * 0.5)
+        if event.kind == "unsupported_capability_claim":
+            state.unsupported_capability_pressure = _clamp(
+                state.unsupported_capability_pressure + value
+            )
+            state.wrongness = _clamp(state.wrongness + value * 0.5)
+        if event.kind == "unverified_fix_claim":
+            state.unverified_fix_pressure = _clamp(
+                state.unverified_fix_pressure + value
+            )
+            state.unresolved_issue_pressure = _clamp(
+                state.unresolved_issue_pressure + value * 0.4
+            )
         if event.kind == "assistant_status_reported":
             state.assistant_status = _clamp(state.assistant_status + value)
             state.communication = _clamp(state.communication + value * 0.4)
@@ -819,6 +948,15 @@ class AffectiveNervousSystem:
         state.database_knowledge = _decay(state.database_knowledge, 0.0, decay)
         state.bug_fix = _decay(state.bug_fix, 0.0, decay)
         state.github_push = _decay(state.github_push, 0.0, decay)
+        state.verification = _decay(state.verification, 0.0, decay)
+        state.truthful_uncertainty = _decay(state.truthful_uncertainty, 0.0, decay)
+        state.overclaim_pressure = _decay(state.overclaim_pressure, 0.0, decay)
+        state.unsupported_capability_pressure = _decay(
+            state.unsupported_capability_pressure, 0.0, decay
+        )
+        state.unverified_fix_pressure = _decay(
+            state.unverified_fix_pressure, 0.0, decay
+        )
 
     @staticmethod
     def _tool_failure_count(messages: List[Dict[str, Any]]) -> int:
@@ -906,6 +1044,15 @@ class AffectiveNervousSystem:
             database_knowledge=_coerce_score(data.get("database_knowledge"), 0.0),
             bug_fix=_coerce_score(data.get("bug_fix"), 0.0),
             github_push=_coerce_score(data.get("github_push"), 0.0),
+            verification=_coerce_score(data.get("verification"), 0.0),
+            truthful_uncertainty=_coerce_score(data.get("truthful_uncertainty"), 0.0),
+            overclaim_pressure=_coerce_score(data.get("overclaim_pressure"), 0.0),
+            unsupported_capability_pressure=_coerce_score(
+                data.get("unsupported_capability_pressure"), 0.0
+            ),
+            unverified_fix_pressure=_coerce_score(
+                data.get("unverified_fix_pressure"), 0.0
+            ),
             updated_at=float(data.get("updated_at") or time.time()),
             active_session_id=str(data.get("active_session_id") or self._session_id),
             recent_events=[

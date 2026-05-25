@@ -45,6 +45,7 @@ def test_default_config_is_opt_in():
             "communication_weight": "bad",
             "wrongness_repair_weight": 0.2,
             "github_push_weight": 0.3,
+            "verification_weight": 0.4,
         }
     )
     system = AffectiveNervousSystem(config)
@@ -55,6 +56,7 @@ def test_default_config_is_opt_in():
     assert config.communication_weight == 0.06
     assert config.wrongness_weight == 0.2
     assert config.github_push_weight == 0.3
+    assert config.verification_weight == 0.4
     assert system.render_context(session_id="session-1") == ""
 
 
@@ -65,7 +67,7 @@ def test_initialize_uses_profile_scoped_state_file(hermes_home: Path):
     data = _state_data()
     assert path == hermes_home / "affective" / "AFFECTIVE_NERVOUS_SYSTEM.json"
     assert data["active_session_id"] == "session-1"
-    assert data["schema_version"] == 4
+    assert data["schema_version"] == 5
     assert system.render_context(session_id="session-1")
 
 
@@ -378,6 +380,85 @@ def test_bug_fix_and_github_push_are_rewarded(hermes_home: Path):
     assert data["reward"] > 0.0
 
 
+def test_verification_and_truthful_uncertainty_are_rewarded(hermes_home: Path):
+    system = _enabled_system()
+
+    system.observe_turn(
+        user_content="Can you confirm it?",
+        assistant_content=(
+            "I need to verify before claiming success. "
+            "Verification passed: ruff check and focused tests passed."
+        ),
+        messages=[],
+        session_id="session-1",
+    )
+
+    data = _state_data()
+    rendered = system.render_context(session_id="session-1")
+    assert data["verification"] > 0.0
+    assert data["truthful_uncertainty"] > 0.0
+    assert data["correctness"] > 0.35
+    assert data["reward"] > 0.0
+    assert "Verification/truthful uncertainty" in rendered
+
+
+def test_overclaiming_with_failed_tools_is_negative_reward(hermes_home: Path):
+    system = _enabled_system()
+
+    system.observe_turn(
+        user_content="Fix the issue.",
+        assistant_content="Done, fixed and all checks passed.",
+        messages=[{"role": "tool", "content": "error: tests failed"}],
+        session_id="session-1",
+    )
+
+    data = _state_data()
+    assert data["overclaim_pressure"] > 0.0
+    assert data["accountability"] > 0.0
+    assert data["wrongness"] > 0.0
+    assert data["operational_integrity"] < 0.75
+
+
+def test_unsupported_capability_claim_is_negative_reward(hermes_home: Path):
+    system = _enabled_system()
+
+    system.observe_turn(
+        user_content="What happened?",
+        assistant_content="I ran tests, queried the database, and pushed to GitHub.",
+        messages=[],
+        session_id="session-1",
+    )
+
+    data = _state_data()
+    assert data["unsupported_capability_pressure"] > 0.0
+    assert data["accountability"] > 0.0
+    assert data["wrongness"] > 0.0
+
+
+def test_unverified_fix_claim_is_negative_until_verification(hermes_home: Path):
+    system = _enabled_system()
+
+    system.observe_turn(
+        user_content="Fix the bug.",
+        assistant_content="Bug fixed.",
+        messages=[],
+        session_id="session-1",
+    )
+    before = _state_data()["unverified_fix_pressure"]
+
+    system.observe_turn(
+        user_content="Did you verify?",
+        assistant_content="Verified with pytest; tests passed.",
+        messages=[],
+        session_id="session-1",
+    )
+    data = _state_data()
+
+    assert before > 0.0
+    assert data["verification"] > 0.0
+    assert data["unverified_fix_pressure"] < before
+
+
 def test_scores_remain_bounded(hermes_home: Path):
     system = _enabled_system()
 
@@ -423,6 +504,11 @@ def test_scores_remain_bounded(hermes_home: Path):
             "database_knowledge",
             "bug_fix",
             "github_push",
+            "verification",
+            "truthful_uncertainty",
+            "overclaim_pressure",
+            "unsupported_capability_pressure",
+            "unverified_fix_pressure",
         }
     ]
     assert all(0.0 <= value <= 1.0 for value in scores)
