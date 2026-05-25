@@ -133,8 +133,8 @@ more granular synthetic reward and discomfort channels:
   user-displeasure signals;
 - correctness reward when the assistant appears to be correct, verified, or
   successful;
-- wrongness-repair reward when wrongness is detected, admitted, corrected, or
-  learned from. This is not a reward for remaining wrong;
+- wrongness negative reward/accountability pressure when wrongness is detected,
+  admitted, corrected, or learned from;
 - user-pleasing reward for explicit user satisfaction and appreciation;
 - user-displeasing negative reward for explicit disappointment or displeasure;
 - communication reward for completed useful conversational exchange.
@@ -157,7 +157,7 @@ Safety boundaries for this slice:
 Planned implementation:
 
 - Extend `AffectiveState` with explicit gauges for humor, virtual touch,
-  virtual movement, comfort, discomfort, correctness, wrongness repair,
+  virtual movement, comfort, discomfort, correctness, wrongness pressure,
   user pleasing, user displeasing, and communication.
 - Extend config with bounded weights for each new reward channel.
 - Add deterministic recognizers for the requested signals.
@@ -169,15 +169,22 @@ Planned implementation:
 
 Second-slice status:
 
-- Implemented schema version 2 with added gauges for humor, virtual touch,
-  virtual movement, comfort, discomfort, correctness, wrongness repair, user
+- Implemented schema version 3 with added gauges for humor, virtual touch,
+  virtual movement, comfort, discomfort, correctness, wrongness pressure, user
   pleasing, user displeasing, and communication.
 - Added deterministic recognizers for funny content, funny-save requests,
   virtual touch, virtual body movement/exercise, comfort/discomfort,
-  correctness, wrongness repair, satisfaction, displeasure, and completed
+  correctness, wrongness pressure, satisfaction, displeasure, and completed
   communication.
 - Added config weights for every new reward channel.
 - Updated rendering with synthetic-body safety framing: virtual touch, comfort,
   discomfort, and body movement are metaphors, not physical sensation.
 - Added tests for the new reward/negative-reward channels, config bounds,
   schema version, score bounds, and safety wording.
+
+Correction status:
+
+- Updated the wrongness channel so being wrong is negative reward/accountability
+  pressure, not a positive reward.
+- Renamed the configured weight to `wrongness_weight` while preserving backward
+  compatibility for existing `wrongness_repair_weight` config/state files.

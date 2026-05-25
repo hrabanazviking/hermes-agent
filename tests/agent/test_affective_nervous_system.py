@@ -43,6 +43,7 @@ def test_default_config_is_opt_in():
             "humor_weight": 2,
             "virtual_touch_weight": -1,
             "communication_weight": "bad",
+            "wrongness_repair_weight": 0.2,
         }
     )
     system = AffectiveNervousSystem(config)
@@ -51,6 +52,7 @@ def test_default_config_is_opt_in():
     assert config.humor_weight == 1.0
     assert config.virtual_touch_weight == 0.0
     assert config.communication_weight == 0.06
+    assert config.wrongness_weight == 0.2
     assert system.render_context(session_id="session-1") == ""
 
 
@@ -61,7 +63,7 @@ def test_initialize_uses_profile_scoped_state_file(hermes_home: Path):
     data = _state_data()
     assert path == hermes_home / "affective" / "AFFECTIVE_NERVOUS_SYSTEM.json"
     assert data["active_session_id"] == "session-1"
-    assert data["schema_version"] == 2
+    assert data["schema_version"] == 3
     assert system.render_context(session_id="session-1")
 
 
@@ -187,7 +189,7 @@ def test_tool_failure_increases_accountability_and_reflection(hermes_home: Path)
     assert data["operational_integrity"] < 0.75
 
 
-def test_correctness_wrongness_repair_and_user_satisfaction_channels(
+def test_correctness_wrongness_and_user_satisfaction_channels(
     hermes_home: Path,
 ):
     system = _enabled_system()
@@ -202,9 +204,28 @@ def test_correctness_wrongness_repair_and_user_satisfaction_channels(
 
     data = _state_data()
     assert data["correctness"] > 0.35
-    assert data["wrongness_repair"] > 0.0
+    assert data["wrongness"] > 0.0
+    assert data["accountability"] > 0.0
     assert data["user_pleasing"] > 0.25
     assert data["reward"] > 0.0
+
+
+def test_wrongness_without_satisfaction_is_negative_reward(hermes_home: Path):
+    system = _enabled_system()
+
+    system.observe_turn(
+        user_content="That was wrong.",
+        assistant_content="I was wrong earlier. My mistake.",
+        messages=[],
+        session_id="session-1",
+        response_transformed=True,
+    )
+
+    data = _state_data()
+    assert data["wrongness"] > 0.0
+    assert data["accountability"] > 0.0
+    assert data["self_reflection"] > 0.35
+    assert data["operational_integrity"] < 0.75
 
 
 def test_user_displeasure_is_negative_reward(hermes_home: Path):
@@ -272,7 +293,7 @@ def test_scores_remain_bounded(hermes_home: Path):
             "comfort",
             "discomfort",
             "correctness",
-            "wrongness_repair",
+            "wrongness",
             "user_pleasing",
             "user_displeasing",
             "communication",

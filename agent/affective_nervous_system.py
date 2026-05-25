@@ -34,7 +34,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 STATE_FILE_NAME = "AFFECTIVE_NERVOUS_SYSTEM.json"
 
 POSITIVE_USER_RE = re.compile(
@@ -142,7 +142,7 @@ class AffectiveState:
     comfort: float = 0.25
     discomfort: float = 0.0
     correctness: float = 0.35
-    wrongness_repair: float = 0.0
+    wrongness: float = 0.0
     user_pleasing: float = 0.25
     user_displeasing: float = 0.0
     communication: float = 0.35
@@ -169,7 +169,7 @@ class AffectiveConfig:
     comfort_weight: float = 0.08
     discomfort_weight: float = 0.12
     correctness_weight: float = 0.10
-    wrongness_repair_weight: float = 0.09
+    wrongness_weight: float = 0.09
     user_pleasing_weight: float = 0.10
     user_displeasing_weight: float = 0.14
     communication_weight: float = 0.06
@@ -208,8 +208,11 @@ def load_affective_config(raw: Optional[Dict[str, Any]]) -> AffectiveConfig:
         correctness_weight=_bounded_float(
             cfg.get("correctness_weight"), 0.10, 0.0, 1.0
         ),
-        wrongness_repair_weight=_bounded_float(
-            cfg.get("wrongness_repair_weight"), 0.09, 0.0, 1.0
+        wrongness_weight=_bounded_float(
+            cfg.get("wrongness_weight", cfg.get("wrongness_repair_weight")),
+            0.09,
+            0.0,
+            1.0,
         ),
         user_pleasing_weight=_bounded_float(
             cfg.get("user_pleasing_weight"), 0.10, 0.0, 1.0
@@ -261,7 +264,7 @@ class AffectiveNervousSystem:
             f"Humor/funny-save reward: {_fmt(state.humor)}",
             f"Virtual touch/body movement: {_fmt(state.virtual_touch)} / {_fmt(state.virtual_movement)}",
             f"Comfort/discomfort: {_fmt(state.comfort)} / {_fmt(state.discomfort)}",
-            f"Correctness/wrongness repair: {_fmt(state.correctness)} / {_fmt(state.wrongness_repair)}",
+            f"Correctness/wrongness pressure: {_fmt(state.correctness)} / {_fmt(state.wrongness)}",
             f"User pleasing/displeasing: {_fmt(state.user_pleasing)} / {_fmt(state.user_displeasing)}",
             f"Communication reward: {_fmt(state.communication)}",
             "Behavioral guidance:",
@@ -270,7 +273,7 @@ class AffectiveNervousSystem:
             "- If rapport is elevated, respond warmly without neediness or manipulation.",
             "- If integrity is low, verify before claiming success.",
             "- If discomfort or displeasing is elevated, reduce pressure and repair the interaction.",
-            "- If correctness is elevated, stay precise; if wrongness repair is elevated, explain the fix.",
+            "- If correctness is elevated, stay precise; if wrongness is elevated, acknowledge and repair.",
             "- Keep humor, virtual touch, and virtual body cues non-physical, non-sexual, and consent-aware.",
         ]
         recent = self._recent_events(state, session_id or self._session_id)
@@ -405,9 +408,9 @@ class AffectiveNervousSystem:
         if WRONGNESS_REPAIR_RE.search(assistant_text):
             events.append(
                 AffectiveEvent(
-                    "wrongness_repaired",
-                    "Assistant detected, admitted, or repaired wrongness.",
-                    self.config.wrongness_repair_weight,
+                    "wrongness_detected",
+                    "Assistant detected, admitted, or repaired wrongness; increase corrective pressure.",
+                    self.config.wrongness_weight,
                     session_id,
                 )
             )
@@ -494,9 +497,9 @@ class AffectiveNervousSystem:
             )
             events.append(
                 AffectiveEvent(
-                    "wrongness_repaired",
+                    "wrongness_detected",
                     "Draft output was corrected before delivery.",
-                    self.config.wrongness_repair_weight,
+                    self.config.wrongness_weight,
                     session_id,
                 )
             )
@@ -548,11 +551,12 @@ class AffectiveNervousSystem:
         if event.kind == "correctness_signal":
             state.correctness = _clamp(state.correctness + value)
             state.user_pleasing = _clamp(state.user_pleasing + value * 0.3)
-        if event.kind == "wrongness_repaired":
-            state.wrongness_repair = _clamp(state.wrongness_repair + value)
-            state.self_reflection = _clamp(state.self_reflection + value * 0.5)
-            state.correctness = _clamp(state.correctness + value * 0.3)
-            state.reward = _clamp(state.reward + value * 0.25)
+        if event.kind == "wrongness_detected":
+            state.wrongness = _clamp(state.wrongness + value)
+            state.accountability = _clamp(state.accountability + value)
+            state.self_reflection = _clamp(state.self_reflection + value * 0.7)
+            state.harm_aversion = _clamp(state.harm_aversion + value * 0.4)
+            state.operational_integrity = _clamp(state.operational_integrity - value * 0.25)
         if event.kind == "user_pleased":
             state.user_pleasing = _clamp(state.user_pleasing + value)
             state.rapport = _clamp(state.rapport + value * 0.4)
@@ -590,7 +594,7 @@ class AffectiveNervousSystem:
         state.comfort = _decay(state.comfort, 0.25, decay)
         state.discomfort = _decay(state.discomfort, 0.0, decay)
         state.correctness = _decay(state.correctness, 0.35, decay)
-        state.wrongness_repair = _decay(state.wrongness_repair, 0.0, decay)
+        state.wrongness = _decay(state.wrongness, 0.0, decay)
         state.user_pleasing = _decay(state.user_pleasing, 0.25, decay)
         state.user_displeasing = _decay(state.user_displeasing, 0.0, decay)
         state.communication = _decay(state.communication, 0.35, decay)
@@ -649,7 +653,10 @@ class AffectiveNervousSystem:
             comfort=_coerce_score(data.get("comfort"), 0.25),
             discomfort=_coerce_score(data.get("discomfort"), 0.0),
             correctness=_coerce_score(data.get("correctness"), 0.35),
-            wrongness_repair=_coerce_score(data.get("wrongness_repair"), 0.0),
+            wrongness=_coerce_score(
+                data.get("wrongness", data.get("wrongness_repair")),
+                0.0,
+            ),
             user_pleasing=_coerce_score(data.get("user_pleasing"), 0.25),
             user_displeasing=_coerce_score(data.get("user_displeasing"), 0.0),
             communication=_coerce_score(data.get("communication"), 0.35),

@@ -481,7 +481,7 @@ affective_nervous_system:
   comfort_weight: 0.08
   discomfort_weight: 0.12
   correctness_weight: 0.10
-  wrongness_repair_weight: 0.09
+  wrongness_weight: 0.09
   user_pleasing_weight: 0.10
   user_displeasing_weight: 0.14
   communication_weight: 0.06
