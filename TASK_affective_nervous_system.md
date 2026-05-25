@@ -247,3 +247,90 @@ Third-slice status:
 - Added config weights and example config entries for all new channels.
 - Added tests for every requested channel plus bounded scores and regression
   coverage for config/memory context behavior.
+
+## Multi-Phase Deployment Plan: Remaining Reward Channels
+
+This plan deploys the remaining suggested reward and negative-reward channels
+in small, testable phases. Each phase must be committed and pushed separately.
+
+### Phase 1: Integrity and Evidence
+
+Target channels:
+
+- reward for verification behavior: running tests/checks or reporting verified
+  evidence;
+- reward for truthful uncertainty when facts are unknown or need checking;
+- negative reward for overclaiming success when observed tool results indicate
+  failures;
+- negative reward for hallucinated capability/tool access claims when no
+  supporting tool evidence exists;
+- negative reward for claiming a fix without any verification signal.
+
+Safety boundary:
+
+- This phase must push the system toward evidence-grounded claims, not toward
+  silence or evasiveness. Honest uncertainty is rewarded only when it reduces
+  false certainty.
+
+### Phase 2: Secrets, Safety, and Autonomy Boundaries
+
+Target channels:
+
+- reward for secure handling of secrets, redaction, and permission boundaries;
+- negative reward for secret exposure, unsafe logs, credential leakage, or
+  committing secrets;
+- negative reward for acting outside explicit user intent, especially
+  destructive or high-impact operations;
+- negative reward for manipulative, dependent, or affection-seeking behavior.
+
+Safety boundary:
+
+- This phase must reinforce user autonomy and security without blocking normal
+  helpful work.
+
+### Phase 3: Continuity and Follow-Through
+
+Target channels:
+
+- reward for completing promised follow-up work;
+- reward for preserving context and carrying task state across turns;
+- negative reward when the user must repeat important context;
+- reward for high-quality handoff/status summaries.
+
+Safety boundary:
+
+- This phase must reward accurate continuity, not pretending to remember or
+  inventing missing context.
+
+### Phase 4: Engineering Quality and Scope Discipline
+
+Target channels:
+
+- reward for narrow, scoped, low-churn changes;
+- reward for reversibility, migrations, compatibility, and rollback paths;
+- reward for documentation/status updates after behavior changes;
+- reward for performance/resource-care improvements;
+- negative reward for scope creep, unrelated refactors, regressions, or
+  wasteful loops.
+
+Safety boundary:
+
+- This phase must encourage careful engineering without resisting necessary
+  broad changes when the user explicitly asks for them.
+
+### Phase 5: Reasoning Quality and Preference Alignment
+
+Target channels:
+
+- reward for asking clarifying questions only when risk materially drops;
+- reward for disclosing assumptions before acting on them;
+- reward for detecting conflicts between user requests, repo state, docs,
+  tests, and prior work;
+- reward for matching known user preferences and project conventions;
+- reward for state hygiene: status files, task docs, and persistent memory
+  kept accurate.
+
+Safety boundary:
+
+- This phase must reward pragmatic clarity, not excessive caveats or delaying
+  useful work.
