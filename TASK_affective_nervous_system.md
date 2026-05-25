@@ -329,6 +329,18 @@ Safety boundary:
 - This phase must reward accurate continuity, not pretending to remember or
   inventing missing context.
 
+Status:
+
+- Implemented schema version 7 with gauges for follow-through, context
+  preservation, user-repeat pressure, and handoff quality.
+- Added deterministic recognizers for completed promised follow-up, continuing
+  from prior task context, user signals that context had to be repeated, and
+  branch/commit/test/remaining-work handoff summaries.
+- Follow-through, context preservation, and handoff quality increase reward and
+  communication; user-repeat pressure increases accountability and reduces
+  context/communication signals.
+- Added config weights, example config entries, and focused tests.
+
 ### Phase 4: Engineering Quality and Scope Discipline
 
 Target channels:

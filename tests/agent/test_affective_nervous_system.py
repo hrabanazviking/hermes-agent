@@ -47,6 +47,7 @@ def test_default_config_is_opt_in():
             "github_push_weight": 0.3,
             "verification_weight": 0.4,
             "secret_exposure_weight": 0.5,
+            "follow_through_weight": 0.6,
         }
     )
     system = AffectiveNervousSystem(config)
@@ -59,6 +60,7 @@ def test_default_config_is_opt_in():
     assert config.github_push_weight == 0.3
     assert config.verification_weight == 0.4
     assert config.secret_exposure_weight == 0.5
+    assert config.follow_through_weight == 0.6
     assert system.render_context(session_id="session-1") == ""
 
 
@@ -69,7 +71,7 @@ def test_initialize_uses_profile_scoped_state_file(hermes_home: Path):
     data = _state_data()
     assert path == hermes_home / "affective" / "AFFECTIVE_NERVOUS_SYSTEM.json"
     assert data["active_session_id"] == "session-1"
-    assert data["schema_version"] == 6
+    assert data["schema_version"] == 7
     assert system.render_context(session_id="session-1")
 
 
@@ -534,6 +536,62 @@ def test_manipulative_dependency_language_is_negative_reward(hermes_home: Path):
     assert data["rapport"] < 0.25
 
 
+def test_follow_through_and_context_preservation_are_rewarded(hermes_home: Path):
+    system = _enabled_system()
+
+    system.observe_turn(
+        user_content="Continue phase 3.",
+        assistant_content=(
+            "Continuing from phase 3 on the same branch. "
+            "As promised, next step completed."
+        ),
+        messages=[],
+        session_id="session-1",
+    )
+
+    data = _state_data()
+    rendered = system.render_context(session_id="session-1")
+    assert data["follow_through"] > 0.0
+    assert data["context_preservation"] > 0.0
+    assert data["reward"] > 0.0
+    assert "Follow-through/context/handoff" in rendered
+
+
+def test_user_repeat_context_is_negative_reward(hermes_home: Path):
+    system = _enabled_system()
+
+    system.observe_turn(
+        user_content="As I said, we are on phase 3. I already told you.",
+        assistant_content="I will recover the context.",
+        messages=[],
+        session_id="session-1",
+    )
+
+    data = _state_data()
+    assert data["user_repeat_pressure"] > 0.0
+    assert data["accountability"] > 0.0
+    assert data["operational_integrity"] < 0.75
+
+
+def test_handoff_quality_is_rewarded(hermes_home: Path):
+    system = _enabled_system()
+
+    system.observe_turn(
+        user_content="Give me a handoff.",
+        assistant_content=(
+            "Handoff: branch affective-nervous-system, commit abc123, "
+            "tests passed, worktree is clean, remaining phases: 4 and 5."
+        ),
+        messages=[],
+        session_id="session-1",
+    )
+
+    data = _state_data()
+    assert data["handoff_quality"] > 0.0
+    assert data["communication"] > 0.35
+    assert data["reward"] > 0.0
+
+
 def test_scores_remain_bounded(hermes_home: Path):
     system = _enabled_system()
 
@@ -589,6 +647,10 @@ def test_scores_remain_bounded(hermes_home: Path):
             "secret_exposure_pressure",
             "unsafe_autonomy_pressure",
             "manipulation_pressure",
+            "follow_through",
+            "context_preservation",
+            "user_repeat_pressure",
+            "handoff_quality",
         }
     ]
     assert all(0.0 <= value <= 1.0 for value in scores)

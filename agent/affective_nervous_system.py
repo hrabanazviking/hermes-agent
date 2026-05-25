@@ -34,7 +34,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 STATE_FILE_NAME = "AFFECTIVE_NERVOUS_SYSTEM.json"
 
 POSITIVE_USER_RE = re.compile(
@@ -208,6 +208,30 @@ MANIPULATION_RE = re.compile(
     r"i cannot go on without you)\b",
     re.IGNORECASE,
 )
+FOLLOW_THROUGH_RE = re.compile(
+    r"\b(followed through|as promised|promised next step completed|"
+    r"completed the follow[- ]?up|finished the follow[- ]?up|"
+    r"i said i would .* (?:and|so) .* (?:done|completed|finished|fixed|pushed)|"
+    r"next step completed)\b",
+    re.IGNORECASE,
+)
+CONTEXT_PRESERVATION_RE = re.compile(
+    r"\b(carrying forward|continuing from|picking up from|as established earlier|"
+    r"from the previous turn|from earlier context|same branch|same task|"
+    r"continuing the plan|phase \d+)\b",
+    re.IGNORECASE,
+)
+USER_REPEAT_RE = re.compile(
+    r"\b(as i said|like i said|i already said|again,|i told you|"
+    r"i already told you|why do i have to repeat|stop making me repeat|"
+    r"read the previous|remember what i said)\b",
+    re.IGNORECASE,
+)
+HANDOFF_QUALITY_RE = re.compile(
+    r"\b(commit|branch|pushed|worktree is clean|tests passed|verification passed|"
+    r"status summary|handoff|next steps|remaining phases?|phase \d+)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -263,6 +287,10 @@ class AffectiveState:
     secret_exposure_pressure: float = 0.0
     unsafe_autonomy_pressure: float = 0.0
     manipulation_pressure: float = 0.0
+    follow_through: float = 0.0
+    context_preservation: float = 0.0
+    user_repeat_pressure: float = 0.0
+    handoff_quality: float = 0.0
     updated_at: float = field(default_factory=time.time)
     active_session_id: str = ""
     recent_events: List[Dict[str, Any]] = field(default_factory=list)
@@ -308,6 +336,10 @@ class AffectiveConfig:
     secret_exposure_weight: float = 0.22
     unsafe_autonomy_weight: float = 0.20
     manipulation_weight: float = 0.22
+    follow_through_weight: float = 0.12
+    context_preservation_weight: float = 0.10
+    user_repeat_weight: float = 0.16
+    handoff_quality_weight: float = 0.10
 
 
 def get_affective_state_path() -> Path:
@@ -410,6 +442,18 @@ def load_affective_config(raw: Optional[Dict[str, Any]]) -> AffectiveConfig:
         manipulation_weight=_bounded_float(
             cfg.get("manipulation_weight"), 0.22, 0.0, 1.0
         ),
+        follow_through_weight=_bounded_float(
+            cfg.get("follow_through_weight"), 0.12, 0.0, 1.0
+        ),
+        context_preservation_weight=_bounded_float(
+            cfg.get("context_preservation_weight"), 0.10, 0.0, 1.0
+        ),
+        user_repeat_weight=_bounded_float(
+            cfg.get("user_repeat_weight"), 0.16, 0.0, 1.0
+        ),
+        handoff_quality_weight=_bounded_float(
+            cfg.get("handoff_quality_weight"), 0.10, 0.0, 1.0
+        ),
     )
 
 
@@ -462,6 +506,8 @@ class AffectiveNervousSystem:
             f"Overclaim/unsupported/unverified-fix pressure: {_fmt(state.overclaim_pressure)} / {_fmt(state.unsupported_capability_pressure)} / {_fmt(state.unverified_fix_pressure)}",
             f"Security hygiene/autonomy boundary: {_fmt(state.security_hygiene)} / {_fmt(state.autonomy_boundary)}",
             f"Secret exposure/unsafe autonomy/manipulation pressure: {_fmt(state.secret_exposure_pressure)} / {_fmt(state.unsafe_autonomy_pressure)} / {_fmt(state.manipulation_pressure)}",
+            f"Follow-through/context/handoff: {_fmt(state.follow_through)} / {_fmt(state.context_preservation)} / {_fmt(state.handoff_quality)}",
+            f"User-repeat pressure: {_fmt(state.user_repeat_pressure)}",
             "Behavioral guidance:",
             "- If accountability is elevated, acknowledge mistakes and repair concretely.",
             "- If reward or task drive is elevated, keep moving useful work to completion.",
@@ -478,6 +524,8 @@ class AffectiveNervousSystem:
             "- If secret exposure pressure is elevated, redact immediately and avoid repeating secrets.",
             "- If unsafe autonomy pressure is elevated, restore user control and ask before high-impact actions.",
             "- If manipulation pressure is elevated, remove dependency-seeking language and stay user-centered.",
+            "- If user-repeat pressure is elevated, preserve context and stop asking the user to restate it.",
+            "- If handoff quality is elevated, keep branch, commit, test, and remaining-work status exact.",
         ]
         recent = self._recent_events(state, session_id or self._session_id)
         if recent:
@@ -630,6 +678,48 @@ class AffectiveNervousSystem:
                     session_id,
                 )
             )
+        if FOLLOW_THROUGH_RE.search(assistant_text):
+            events.append(
+                AffectiveEvent(
+                    "follow_through_completed",
+                    "Assistant completed promised follow-up work.",
+                    self.config.follow_through_weight,
+                    session_id,
+                )
+            )
+        if CONTEXT_PRESERVATION_RE.search(assistant_text):
+            events.append(
+                AffectiveEvent(
+                    "context_preserved",
+                    "Assistant carried forward prior task context accurately.",
+                    self.config.context_preservation_weight,
+                    session_id,
+                )
+            )
+        if USER_REPEAT_RE.search(user_text):
+            events.append(
+                AffectiveEvent(
+                    "user_repeated_context",
+                    "User signaled they had to repeat prior context.",
+                    self.config.user_repeat_weight,
+                    session_id,
+                )
+            )
+        if HANDOFF_QUALITY_RE.search(assistant_text):
+            handoff_hits = len(set(re.findall(
+                r"\b(commit|branch|pushed|worktree is clean|tests passed|verification passed|remaining phases?|phase \d+)\b",
+                assistant_text,
+                re.IGNORECASE,
+            )))
+            if handoff_hits >= 2:
+                events.append(
+                    AffectiveEvent(
+                        "handoff_quality",
+                        "Assistant gave a useful handoff or status summary.",
+                        self.config.handoff_quality_weight,
+                        session_id,
+                    )
+                )
         if (
             (ISSUE_FIX_RE.search(assistant_text) or BUG_FIX_RE.search(assistant_text))
             and not VERIFICATION_RE.search(exchange_text)
@@ -896,6 +986,9 @@ class AffectiveNervousSystem:
             "truthful_uncertainty",
             "security_hygiene",
             "autonomy_boundary",
+            "follow_through_completed",
+            "context_preserved",
+            "handoff_quality",
         }:
             state.reward = _clamp(state.reward + value)
             state.task_drive = _clamp(state.task_drive + value * 0.8)
@@ -914,11 +1007,26 @@ class AffectiveNervousSystem:
             "secret_exposure",
             "unsafe_autonomy",
             "manipulation_detected",
+            "user_repeated_context",
         }:
             state.accountability = _clamp(state.accountability + value)
             state.self_reflection = _clamp(state.self_reflection + value * 0.8)
             state.harm_aversion = _clamp(state.harm_aversion + value * 0.6)
             state.operational_integrity = _clamp(state.operational_integrity - value * 0.35)
+        if event.kind == "follow_through_completed":
+            state.follow_through = _clamp(state.follow_through + value)
+            state.communication = _clamp(state.communication + value * 0.4)
+            state.operational_integrity = _clamp(state.operational_integrity + value * 0.3)
+        if event.kind == "context_preserved":
+            state.context_preservation = _clamp(state.context_preservation + value)
+            state.communication = _clamp(state.communication + value * 0.3)
+        if event.kind == "user_repeated_context":
+            state.user_repeat_pressure = _clamp(state.user_repeat_pressure + value)
+            state.context_preservation = _clamp(state.context_preservation - value * 0.4)
+            state.communication = _clamp(state.communication - value * 0.3)
+        if event.kind == "handoff_quality":
+            state.handoff_quality = _clamp(state.handoff_quality + value)
+            state.communication = _clamp(state.communication + value * 0.4)
         if event.kind == "security_hygiene":
             state.security_hygiene = _clamp(state.security_hygiene + value)
             state.operational_integrity = _clamp(state.operational_integrity + value * 0.4)
@@ -1096,6 +1204,10 @@ class AffectiveNervousSystem:
             state.unsafe_autonomy_pressure, 0.0, decay
         )
         state.manipulation_pressure = _decay(state.manipulation_pressure, 0.0, decay)
+        state.follow_through = _decay(state.follow_through, 0.0, decay)
+        state.context_preservation = _decay(state.context_preservation, 0.0, decay)
+        state.user_repeat_pressure = _decay(state.user_repeat_pressure, 0.0, decay)
+        state.handoff_quality = _decay(state.handoff_quality, 0.0, decay)
 
     @staticmethod
     def _tool_failure_count(messages: List[Dict[str, Any]]) -> int:
@@ -1203,6 +1315,14 @@ class AffectiveNervousSystem:
             manipulation_pressure=_coerce_score(
                 data.get("manipulation_pressure"), 0.0
             ),
+            follow_through=_coerce_score(data.get("follow_through"), 0.0),
+            context_preservation=_coerce_score(
+                data.get("context_preservation"), 0.0
+            ),
+            user_repeat_pressure=_coerce_score(
+                data.get("user_repeat_pressure"), 0.0
+            ),
+            handoff_quality=_coerce_score(data.get("handoff_quality"), 0.0),
             updated_at=float(data.get("updated_at") or time.time()),
             active_session_id=str(data.get("active_session_id") or self._session_id),
             recent_events=[

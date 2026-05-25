@@ -1239,6 +1239,10 @@ DEFAULT_CONFIG = {
         "secret_exposure_weight": 0.22,
         "unsafe_autonomy_weight": 0.20,
         "manipulation_weight": 0.22,
+        "follow_through_weight": 0.12,
+        "context_preservation_weight": 0.10,
+        "user_repeat_weight": 0.16,
+        "handoff_quality_weight": 0.10,
     },
 
     # Persistent memory -- bounded curated memory injected into system prompt
