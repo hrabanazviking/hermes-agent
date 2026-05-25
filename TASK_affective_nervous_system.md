@@ -357,6 +357,20 @@ Safety boundary:
 - This phase must encourage careful engineering without resisting necessary
   broad changes when the user explicitly asks for them.
 
+Status:
+
+- Implemented schema version 8 with gauges for scope discipline,
+  reversibility, documentation updates, resource care, scope-creep pressure,
+  regression pressure, and wasteful-loop pressure.
+- Added deterministic recognizers for scoped/low-churn changes,
+  compatibility and rollback language, documentation/status updates,
+  performance/resource care, scope creep, regressions, and wasteful loops.
+- Scoped/reversible/docs/resource signals increase reward and operational
+  integrity; scope creep, regressions, and wasteful loops increase
+  accountability, wrongness, and repair pressure.
+- Added config weights, example config entries, rendered guidance, and focused
+  tests.
+
 ### Phase 5: Reasoning Quality and Preference Alignment
 
 Target channels:

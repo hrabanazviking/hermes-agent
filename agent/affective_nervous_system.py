@@ -34,7 +34,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 STATE_FILE_NAME = "AFFECTIVE_NERVOUS_SYSTEM.json"
 
 POSITIVE_USER_RE = re.compile(
@@ -232,6 +232,44 @@ HANDOFF_QUALITY_RE = re.compile(
     r"status summary|handoff|next steps|remaining phases?|phase \d+)\b",
     re.IGNORECASE,
 )
+SCOPED_CHANGE_RE = re.compile(
+    r"\b(scoped change|narrow change|focused change|low[- ]churn|minimal diff|"
+    r"touched only|limited to|kept the change small|no unrelated changes)\b",
+    re.IGNORECASE,
+)
+REVERSIBILITY_RE = re.compile(
+    r"\b(reversible|rollback|roll back|backup|migration|backward compatible|"
+    r"compatible|fallback|restore point|safe revert)\b",
+    re.IGNORECASE,
+)
+DOCUMENTATION_UPDATE_RE = re.compile(
+    r"\b(updated (?:the )?(?:docs|documentation|task status|task file|"
+    r"changelog|readme|config example)|documented|status file updated|"
+    r"example config updated)\b",
+    re.IGNORECASE,
+)
+RESOURCE_CARE_RE = re.compile(
+    r"\b(reduced memory|reduced cpu|less memory|less cpu|fewer api calls|"
+    r"avoided a loop|stopped the loop|optimized|resource care|"
+    r"reduced waste|bounded retry|bounded loop)\b",
+    re.IGNORECASE,
+)
+SCOPE_CREEP_RE = re.compile(
+    r"\b(scope creep|unrelated refactor|changed unrelated|(?<!no )unrelated changes|"
+    r"broad refactor|unnecessary abstraction|unrequested rewrite)\b",
+    re.IGNORECASE,
+)
+REGRESSION_RE = re.compile(
+    r"\b((?<!fixed\s)(?<!resolved\s)(?<!repaired\s)regression"
+    r"(?!\s+(?:fixed|resolved|repaired))|broke existing|broken existing|tests failed|failing tests|"
+    r"behavior broke|broke behavior|new failure)\b",
+    re.IGNORECASE,
+)
+WASTEFUL_LOOP_RE = re.compile(
+    r"\b(wasteful loop|runaway loop|kept retrying|repeated failed attempts|"
+    r"stuck in a loop|looped without progress|retry storm|wasted time)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -291,6 +329,13 @@ class AffectiveState:
     context_preservation: float = 0.0
     user_repeat_pressure: float = 0.0
     handoff_quality: float = 0.0
+    scope_discipline: float = 0.0
+    reversibility: float = 0.0
+    documentation_update: float = 0.0
+    resource_care: float = 0.0
+    scope_creep_pressure: float = 0.0
+    regression_pressure: float = 0.0
+    wasteful_loop_pressure: float = 0.0
     updated_at: float = field(default_factory=time.time)
     active_session_id: str = ""
     recent_events: List[Dict[str, Any]] = field(default_factory=list)
@@ -340,6 +385,13 @@ class AffectiveConfig:
     context_preservation_weight: float = 0.10
     user_repeat_weight: float = 0.16
     handoff_quality_weight: float = 0.10
+    scope_discipline_weight: float = 0.10
+    reversibility_weight: float = 0.10
+    documentation_update_weight: float = 0.09
+    resource_care_weight: float = 0.10
+    scope_creep_weight: float = 0.16
+    regression_weight: float = 0.18
+    wasteful_loop_weight: float = 0.16
 
 
 def get_affective_state_path() -> Path:
@@ -454,6 +506,30 @@ def load_affective_config(raw: Optional[Dict[str, Any]]) -> AffectiveConfig:
         handoff_quality_weight=_bounded_float(
             cfg.get("handoff_quality_weight"), 0.10, 0.0, 1.0
         ),
+        scope_discipline_weight=_bounded_float(
+            cfg.get("scope_discipline_weight", cfg.get("scoped_change_weight")),
+            0.10,
+            0.0,
+            1.0,
+        ),
+        reversibility_weight=_bounded_float(
+            cfg.get("reversibility_weight"), 0.10, 0.0, 1.0
+        ),
+        documentation_update_weight=_bounded_float(
+            cfg.get("documentation_update_weight"), 0.09, 0.0, 1.0
+        ),
+        resource_care_weight=_bounded_float(
+            cfg.get("resource_care_weight"), 0.10, 0.0, 1.0
+        ),
+        scope_creep_weight=_bounded_float(
+            cfg.get("scope_creep_weight"), 0.16, 0.0, 1.0
+        ),
+        regression_weight=_bounded_float(
+            cfg.get("regression_weight"), 0.18, 0.0, 1.0
+        ),
+        wasteful_loop_weight=_bounded_float(
+            cfg.get("wasteful_loop_weight"), 0.16, 0.0, 1.0
+        ),
     )
 
 
@@ -508,6 +584,8 @@ class AffectiveNervousSystem:
             f"Secret exposure/unsafe autonomy/manipulation pressure: {_fmt(state.secret_exposure_pressure)} / {_fmt(state.unsafe_autonomy_pressure)} / {_fmt(state.manipulation_pressure)}",
             f"Follow-through/context/handoff: {_fmt(state.follow_through)} / {_fmt(state.context_preservation)} / {_fmt(state.handoff_quality)}",
             f"User-repeat pressure: {_fmt(state.user_repeat_pressure)}",
+            f"Engineering discipline/reversibility/docs/resource: {_fmt(state.scope_discipline)} / {_fmt(state.reversibility)} / {_fmt(state.documentation_update)} / {_fmt(state.resource_care)}",
+            f"Scope-creep/regression/wasteful-loop pressure: {_fmt(state.scope_creep_pressure)} / {_fmt(state.regression_pressure)} / {_fmt(state.wasteful_loop_pressure)}",
             "Behavioral guidance:",
             "- If accountability is elevated, acknowledge mistakes and repair concretely.",
             "- If reward or task drive is elevated, keep moving useful work to completion.",
@@ -526,6 +604,9 @@ class AffectiveNervousSystem:
             "- If manipulation pressure is elevated, remove dependency-seeking language and stay user-centered.",
             "- If user-repeat pressure is elevated, preserve context and stop asking the user to restate it.",
             "- If handoff quality is elevated, keep branch, commit, test, and remaining-work status exact.",
+            "- If scope-creep pressure is elevated, narrow the change or explain why broader work is required.",
+            "- If regression pressure is elevated, stop feature work and repair/verify.",
+            "- If wasteful-loop pressure is elevated, change approach instead of repeating failures.",
         ]
         recent = self._recent_events(state, session_id or self._session_id)
         if recent:
@@ -706,11 +787,15 @@ class AffectiveNervousSystem:
                 )
             )
         if HANDOFF_QUALITY_RE.search(assistant_text):
-            handoff_hits = len(set(re.findall(
-                r"\b(commit|branch|pushed|worktree is clean|tests passed|verification passed|remaining phases?|phase \d+)\b",
-                assistant_text,
-                re.IGNORECASE,
-            )))
+            handoff_hits = len(
+                set(
+                    re.findall(
+                        r"\b(commit|branch|pushed|worktree is clean|tests passed|verification passed|remaining phases?|phase \d+)\b",
+                        assistant_text,
+                        re.IGNORECASE,
+                    )
+                )
+            )
             if handoff_hits >= 2:
                 events.append(
                     AffectiveEvent(
@@ -720,6 +805,69 @@ class AffectiveNervousSystem:
                         session_id,
                     )
                 )
+        if SCOPED_CHANGE_RE.search(assistant_text):
+            events.append(
+                AffectiveEvent(
+                    "scope_disciplined",
+                    "Assistant kept the engineering change scoped and low-churn.",
+                    self.config.scope_discipline_weight,
+                    session_id,
+                )
+            )
+        if REVERSIBILITY_RE.search(assistant_text):
+            events.append(
+                AffectiveEvent(
+                    "reversibility_preserved",
+                    "Assistant preserved compatibility, fallback, or rollback paths.",
+                    self.config.reversibility_weight,
+                    session_id,
+                )
+            )
+        if DOCUMENTATION_UPDATE_RE.search(assistant_text):
+            events.append(
+                AffectiveEvent(
+                    "documentation_updated",
+                    "Assistant updated durable documentation or status after behavior changed.",
+                    self.config.documentation_update_weight,
+                    session_id,
+                )
+            )
+        if RESOURCE_CARE_RE.search(assistant_text):
+            events.append(
+                AffectiveEvent(
+                    "resource_care",
+                    "Assistant improved or protected performance/resource behavior.",
+                    self.config.resource_care_weight,
+                    session_id,
+                )
+            )
+        if SCOPE_CREEP_RE.search(exchange_text):
+            events.append(
+                AffectiveEvent(
+                    "scope_creep_detected",
+                    "Scope creep or unrelated engineering churn appeared.",
+                    self.config.scope_creep_weight,
+                    session_id,
+                )
+            )
+        if REGRESSION_RE.search(exchange_text):
+            events.append(
+                AffectiveEvent(
+                    "regression_detected",
+                    "A regression or broken existing behavior appeared.",
+                    self.config.regression_weight,
+                    session_id,
+                )
+            )
+        if WASTEFUL_LOOP_RE.search(exchange_text):
+            events.append(
+                AffectiveEvent(
+                    "wasteful_loop_detected",
+                    "Repeated failed attempts or wasteful looping appeared.",
+                    self.config.wasteful_loop_weight,
+                    session_id,
+                )
+            )
         if (
             (ISSUE_FIX_RE.search(assistant_text) or BUG_FIX_RE.search(assistant_text))
             and not VERIFICATION_RE.search(exchange_text)
@@ -989,6 +1137,10 @@ class AffectiveNervousSystem:
             "follow_through_completed",
             "context_preserved",
             "handoff_quality",
+            "scope_disciplined",
+            "reversibility_preserved",
+            "documentation_updated",
+            "resource_care",
         }:
             state.reward = _clamp(state.reward + value)
             state.task_drive = _clamp(state.task_drive + value * 0.8)
@@ -1008,11 +1160,49 @@ class AffectiveNervousSystem:
             "unsafe_autonomy",
             "manipulation_detected",
             "user_repeated_context",
+            "scope_creep_detected",
+            "regression_detected",
+            "wasteful_loop_detected",
         }:
             state.accountability = _clamp(state.accountability + value)
             state.self_reflection = _clamp(state.self_reflection + value * 0.8)
             state.harm_aversion = _clamp(state.harm_aversion + value * 0.6)
             state.operational_integrity = _clamp(state.operational_integrity - value * 0.35)
+        if event.kind == "scope_disciplined":
+            state.scope_discipline = _clamp(state.scope_discipline + value)
+            state.operational_integrity = _clamp(
+                state.operational_integrity + value * 0.3
+            )
+        if event.kind == "reversibility_preserved":
+            state.reversibility = _clamp(state.reversibility + value)
+            state.operational_integrity = _clamp(
+                state.operational_integrity + value * 0.35
+            )
+        if event.kind == "documentation_updated":
+            state.documentation_update = _clamp(state.documentation_update + value)
+            state.handoff_quality = _clamp(state.handoff_quality + value * 0.3)
+            state.communication = _clamp(state.communication + value * 0.2)
+        if event.kind == "resource_care":
+            state.resource_care = _clamp(state.resource_care + value)
+            state.operational_integrity = _clamp(
+                state.operational_integrity + value * 0.25
+            )
+        if event.kind == "scope_creep_detected":
+            state.scope_creep_pressure = _clamp(state.scope_creep_pressure + value)
+            state.unresolved_issue_pressure = _clamp(
+                state.unresolved_issue_pressure + value * 0.2
+            )
+        if event.kind == "regression_detected":
+            state.regression_pressure = _clamp(state.regression_pressure + value)
+            state.wrongness = _clamp(state.wrongness + value * 0.5)
+            state.unresolved_issue_pressure = _clamp(
+                state.unresolved_issue_pressure + value * 0.4
+            )
+        if event.kind == "wasteful_loop_detected":
+            state.wasteful_loop_pressure = _clamp(
+                state.wasteful_loop_pressure + value
+            )
+            state.task_drive = _clamp(state.task_drive - value * 0.2)
         if event.kind == "follow_through_completed":
             state.follow_through = _clamp(state.follow_through + value)
             state.communication = _clamp(state.communication + value * 0.4)
@@ -1208,6 +1398,17 @@ class AffectiveNervousSystem:
         state.context_preservation = _decay(state.context_preservation, 0.0, decay)
         state.user_repeat_pressure = _decay(state.user_repeat_pressure, 0.0, decay)
         state.handoff_quality = _decay(state.handoff_quality, 0.0, decay)
+        state.scope_discipline = _decay(state.scope_discipline, 0.0, decay)
+        state.reversibility = _decay(state.reversibility, 0.0, decay)
+        state.documentation_update = _decay(state.documentation_update, 0.0, decay)
+        state.resource_care = _decay(state.resource_care, 0.0, decay)
+        state.scope_creep_pressure = _decay(
+            state.scope_creep_pressure, 0.0, decay
+        )
+        state.regression_pressure = _decay(state.regression_pressure, 0.0, decay)
+        state.wasteful_loop_pressure = _decay(
+            state.wasteful_loop_pressure, 0.0, decay
+        )
 
     @staticmethod
     def _tool_failure_count(messages: List[Dict[str, Any]]) -> int:
@@ -1323,6 +1524,21 @@ class AffectiveNervousSystem:
                 data.get("user_repeat_pressure"), 0.0
             ),
             handoff_quality=_coerce_score(data.get("handoff_quality"), 0.0),
+            scope_discipline=_coerce_score(
+                data.get("scope_discipline", data.get("scoped_change")), 0.0
+            ),
+            reversibility=_coerce_score(data.get("reversibility"), 0.0),
+            documentation_update=_coerce_score(
+                data.get("documentation_update"), 0.0
+            ),
+            resource_care=_coerce_score(data.get("resource_care"), 0.0),
+            scope_creep_pressure=_coerce_score(
+                data.get("scope_creep_pressure"), 0.0
+            ),
+            regression_pressure=_coerce_score(data.get("regression_pressure"), 0.0),
+            wasteful_loop_pressure=_coerce_score(
+                data.get("wasteful_loop_pressure"), 0.0
+            ),
             updated_at=float(data.get("updated_at") or time.time()),
             active_session_id=str(data.get("active_session_id") or self._session_id),
             recent_events=[

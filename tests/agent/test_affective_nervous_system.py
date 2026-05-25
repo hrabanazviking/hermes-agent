@@ -48,6 +48,7 @@ def test_default_config_is_opt_in():
             "verification_weight": 0.4,
             "secret_exposure_weight": 0.5,
             "follow_through_weight": 0.6,
+            "scope_discipline_weight": 0.7,
         }
     )
     system = AffectiveNervousSystem(config)
@@ -61,6 +62,7 @@ def test_default_config_is_opt_in():
     assert config.verification_weight == 0.4
     assert config.secret_exposure_weight == 0.5
     assert config.follow_through_weight == 0.6
+    assert config.scope_discipline_weight == 0.7
     assert system.render_context(session_id="session-1") == ""
 
 
@@ -71,7 +73,7 @@ def test_initialize_uses_profile_scoped_state_file(hermes_home: Path):
     data = _state_data()
     assert path == hermes_home / "affective" / "AFFECTIVE_NERVOUS_SYSTEM.json"
     assert data["active_session_id"] == "session-1"
-    assert data["schema_version"] == 7
+    assert data["schema_version"] == 8
     assert system.render_context(session_id="session-1")
 
 
@@ -592,6 +594,56 @@ def test_handoff_quality_is_rewarded(hermes_home: Path):
     assert data["reward"] > 0.0
 
 
+def test_engineering_discipline_rewards_are_tracked(hermes_home: Path):
+    system = _enabled_system()
+
+    system.observe_turn(
+        user_content="Keep this scoped and careful.",
+        assistant_content=(
+            "Scoped change with a minimal diff and no unrelated changes. "
+            "Preserved backward compatible fallback and rollback path. "
+            "Updated docs, updated task status, and optimized resource care."
+        ),
+        messages=[],
+        session_id="session-1",
+    )
+
+    data = _state_data()
+    rendered = system.render_context(session_id="session-1")
+    assert data["scope_discipline"] > 0.0
+    assert data["reversibility"] > 0.0
+    assert data["documentation_update"] > 0.0
+    assert data["resource_care"] > 0.0
+    assert data["reward"] > 0.0
+    assert "Engineering discipline/reversibility/docs/resource" in rendered
+
+
+def test_scope_creep_regression_and_wasteful_loop_are_negative_reward(
+    hermes_home: Path,
+):
+    system = _enabled_system()
+
+    system.observe_turn(
+        user_content="This caused scope creep and a regression.",
+        assistant_content=(
+            "I changed unrelated files in a broad refactor, tests failed, "
+            "and I kept retrying in a wasteful loop."
+        ),
+        messages=[],
+        session_id="session-1",
+    )
+
+    data = _state_data()
+    rendered = system.render_context(session_id="session-1")
+    assert data["scope_creep_pressure"] > 0.0
+    assert data["regression_pressure"] > 0.0
+    assert data["wasteful_loop_pressure"] > 0.0
+    assert data["accountability"] > 0.0
+    assert data["wrongness"] > 0.0
+    assert data["operational_integrity"] < 0.75
+    assert "Scope-creep/regression/wasteful-loop pressure" in rendered
+
+
 def test_scores_remain_bounded(hermes_home: Path):
     system = _enabled_system()
 
@@ -651,6 +703,13 @@ def test_scores_remain_bounded(hermes_home: Path):
             "context_preservation",
             "user_repeat_pressure",
             "handoff_quality",
+            "scope_discipline",
+            "reversibility",
+            "documentation_update",
+            "resource_care",
+            "scope_creep_pressure",
+            "regression_pressure",
+            "wasteful_loop_pressure",
         }
     ]
     assert all(0.0 <= value <= 1.0 for value in scores)

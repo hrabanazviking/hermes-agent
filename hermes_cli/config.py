@@ -1243,6 +1243,13 @@ DEFAULT_CONFIG = {
         "context_preservation_weight": 0.10,
         "user_repeat_weight": 0.16,
         "handoff_quality_weight": 0.10,
+        "scope_discipline_weight": 0.10,
+        "reversibility_weight": 0.10,
+        "documentation_update_weight": 0.09,
+        "resource_care_weight": 0.10,
+        "scope_creep_weight": 0.16,
+        "regression_weight": 0.18,
+        "wasteful_loop_weight": 0.16,
     },
 
     # Persistent memory -- bounded curated memory injected into system prompt
