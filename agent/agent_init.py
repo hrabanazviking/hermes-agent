@@ -1053,6 +1053,14 @@ def init_agent(
     # needed later by the startup feasibility check.  Avoid exposing a
     # broad pseudo-public config object on the agent instance.
     agent._aux_compression_context_length_config = None
+    agent._truth_refiner_config = None
+    try:
+        from agent.truth_refiner import load_truth_refiner_config
+        agent._truth_refiner_config = load_truth_refiner_config(
+            _agent_cfg.get("truth_refiner", {}) if _agent_cfg else {}
+        )
+    except Exception:
+        agent._truth_refiner_config = None
 
     # Persistent memory (MEMORY.md + USER.md) -- loaded from disk
     agent._memory_store = None

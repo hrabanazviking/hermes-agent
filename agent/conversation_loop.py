@@ -4108,6 +4108,8 @@ def run_conversation(
             logger.debug("file-mutation verifier footer failed: %s", _ver_err)
 
     _response_transformed = False
+    _truth_refined = False
+    _truth_refiner_corrections = 0
 
     # Plugin hook: transform_llm_output
     # Fired once per turn after the tool-calling loop completes.
@@ -4130,6 +4132,47 @@ def run_conversation(
                     break  # First non-empty string wins
         except Exception as exc:
             logger.warning("transform_llm_output hook failed: %s", exc)
+
+    # Truth refiner: corrective final-output verification. This is not a
+    # yes/no gate; it asks for concrete corrections and a corrected answer,
+    # then feeds those corrections back to the main model for one repair pass.
+    if final_response and not interrupted:
+        try:
+            _truth_cfg = getattr(agent, "_truth_refiner_config", None)
+            if _truth_cfg and getattr(_truth_cfg, "enabled", False):
+                _truth_result = agent._refine_final_response_truth(
+                    messages=messages,
+                    original_user_message=original_user_message,
+                    final_response=final_response,
+                )
+                if getattr(_truth_result, "changed", False):
+                    final_response = _truth_result.final_response
+                    _truth_refined = True
+                    _response_transformed = True
+                    _truth_refiner_corrections = len(
+                        getattr(_truth_result, "corrections", []) or []
+                    )
+                    for _msg in reversed(messages):
+                        if (
+                            isinstance(_msg, dict)
+                            and _msg.get("role") == "assistant"
+                            and not _msg.get("tool_calls")
+                        ):
+                            _msg["content"] = final_response
+                            _msg["truth_refined"] = True
+                            _msg["truth_refiner_corrections"] = _truth_refiner_corrections
+                            break
+                    # If streaming already previewed the draft, force callers
+                    # to display the corrected final answer too.
+                    if getattr(agent, "_response_was_previewed", False):
+                        agent._response_was_previewed = False
+                    logger.info(
+                        "Truth refiner corrected final response (%d correction%s)",
+                        _truth_refiner_corrections,
+                        "" if _truth_refiner_corrections == 1 else "s",
+                    )
+        except Exception as exc:
+            logger.warning("truth_refiner failed: %s", exc)
 
     # Plugin hook: post_llm_call
     # Fired once per turn after the tool-calling loop completes.
@@ -4179,6 +4222,8 @@ def run_conversation(
         "partial": False,  # True only when stopped due to invalid tool calls
         "interrupted": interrupted,
         "response_transformed": _response_transformed,
+        "truth_refined": _truth_refined,
+        "truth_refiner_corrections": _truth_refiner_corrections,
         "response_previewed": getattr(agent, "_response_was_previewed", False),
         "model": agent.model,
         "provider": agent.provider,

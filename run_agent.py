@@ -2133,6 +2133,23 @@ class AIAgent:
         except Exception:
             pass
 
+    def _refine_final_response_truth(
+        self,
+        *,
+        messages: List[Dict],
+        original_user_message: Any,
+        final_response: str,
+    ):
+        """Run corrective truth refinement for a final response."""
+        from agent.truth_refiner import refine_final_response
+        return refine_final_response(
+            agent=self,
+            messages=messages,
+            original_user_message=original_user_message,
+            final_response=final_response,
+            config=self._truth_refiner_config,
+        )
+
     def release_clients(self) -> None:
         """Release LLM client resources WITHOUT tearing down session tool state.
 

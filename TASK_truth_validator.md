@@ -87,3 +87,18 @@ Add a truth-refinement subsystem that:
 ## Proposed Implementation Slice
 
 The first slice should implement the internal truth-refiner module, config, and conversation-loop integration as an opt-in feature disabled by default. Once the pipeline is stable, it can be enabled on the fork profile config.
+
+## Implementation Notes
+
+Implemented after the task document was committed:
+
+- Added `agent/truth_refiner.py`.
+- Added `truth_refiner` config defaults.
+- Added `auxiliary.truth_refiner` task config.
+- Wired final-response truth refinement into `agent/conversation_loop.py` after normal output transforms and before `post_llm_call`.
+- Added a thin `AIAgent._refine_final_response_truth()` forwarder in `run_agent.py`.
+- The verifier returns `corrected_response` plus concrete `corrections`, not a yes/no verdict.
+- When corrections exist, Hermes feeds those corrections back to the main model for one repair pass.
+- If main-model repair fails, Hermes falls back to the verifier-corrected answer.
+- If streaming already previewed the draft, Hermes marks the response as not previewed so the corrected final answer is still displayed.
+- Added focused tests in `tests/agent/test_truth_refiner.py`.

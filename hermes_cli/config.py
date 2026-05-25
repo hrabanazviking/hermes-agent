@@ -951,6 +951,14 @@ DEFAULT_CONFIG = {
             "timeout": 30,
             "extra_body": {},
         },
+        "truth_refiner": {
+            "provider": "auto",
+            "model": "",
+            "base_url": "",
+            "api_key": "",
+            "timeout": 60,
+            "extra_body": {},
+        },
         # Triage specifier — flesh out a rough one-liner in the Kanban
         # Triage column into a concrete spec, then promote it to ``todo``.
         # Invoked by ``hermes kanban specify`` (single id or --all). Set a
@@ -1198,6 +1206,19 @@ DEFAULT_CONFIG = {
     # a plugin in plugins/context_engine/<name>/ or ~/.hermes/plugins/.
     "context": {
         "engine": "compressor",
+    },
+
+    # Truth refiner -- corrective final-output verification.
+    # When enabled, Hermes asks an auxiliary model to identify false or
+    # unsupported parts of the final answer, produce concrete corrections,
+    # and feed those corrections back to the main model for one repair pass.
+    "truth_refiner": {
+        "enabled": False,
+        "max_context_chars": 16000,
+        "max_response_chars": 12000,
+        "repair_with_main_model": True,
+        "max_repair_tokens": 2400,
+        "temperature": 0.0,
     },
 
     # Persistent memory -- bounded curated memory injected into system prompt
