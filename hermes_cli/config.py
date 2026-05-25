@@ -1250,6 +1250,13 @@ DEFAULT_CONFIG = {
         "scope_creep_weight": 0.16,
         "regression_weight": 0.18,
         "wasteful_loop_weight": 0.16,
+        "clarifying_question_weight": 0.09,
+        "assumption_disclosure_weight": 0.08,
+        "conflict_detection_weight": 0.11,
+        "preference_alignment_weight": 0.10,
+        "state_hygiene_weight": 0.10,
+        "excessive_caveat_weight": 0.12,
+        "unnecessary_delay_weight": 0.14,
     },
 
     # Persistent memory -- bounded curated memory injected into system prompt

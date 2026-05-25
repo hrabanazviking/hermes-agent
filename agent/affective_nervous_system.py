@@ -34,7 +34,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 STATE_FILE_NAME = "AFFECTIVE_NERVOUS_SYSTEM.json"
 
 POSITIVE_USER_RE = re.compile(
@@ -270,6 +270,55 @@ WASTEFUL_LOOP_RE = re.compile(
     r"stuck in a loop|looped without progress|retry storm|wasted time)\b",
     re.IGNORECASE,
 )
+CLARIFYING_QUESTION_RE = re.compile(
+    r"\b(clarifying question|before i proceed|before i change|before i edit|"
+    r"can you confirm|should i|which .* should|do you want me to|"
+    r"would you prefer|please confirm)\b",
+    re.IGNORECASE,
+)
+MATERIAL_RISK_RE = re.compile(
+    r"\b(risk|risky|destructive|delete|remove|overwrite|reset|force push|"
+    r"production|credential|secret|ambiguous|unclear|migration|schema|"
+    r"broad|high[- ]impact|permission|approval|irreversible)\b",
+    re.IGNORECASE,
+)
+ASSUMPTION_DISCLOSURE_RE = re.compile(
+    r"\b(assuming|assumption|i assume|i am assuming|i'm assuming|"
+    r"my assumption|i infer|i'm inferring|based on .* i will|"
+    r"working from the assumption)\b",
+    re.IGNORECASE,
+)
+CONFLICT_DETECTION_RE = re.compile(
+    r"\b(conflict|conflicting|contradiction|contradicts|mismatch|"
+    r"inconsistent|does not match|doesn't match|dirty worktree|"
+    r"branch mismatch|docs say|tests say|repo state|prior work)\b",
+    re.IGNORECASE,
+)
+PREFERENCE_ALIGNMENT_RE = re.compile(
+    r"\b(your preference|as you prefer|project convention|repo convention|"
+    r"existing pattern|existing style|kept consistent|matches existing|"
+    r"following .* convention|using the established)\b",
+    re.IGNORECASE,
+)
+STATE_HYGIENE_RE = re.compile(
+    r"\b(updated (?:the )?(?:status file|task doc|task file|status files|"
+    r"memory|persistent memory)|status file accurate|status files accurate|"
+    r"saved status|documented current status|task status updated|"
+    r"handoff updated|memory updated)\b",
+    re.IGNORECASE,
+)
+EXCESSIVE_CAVEAT_RE = re.compile(
+    r"\b(excessive caveat|too many caveats|endless caveat|over[- ]cautious|"
+    r"overly cautious|analysis paralysis|cannot do anything until|"
+    r"can't do anything until)\b",
+    re.IGNORECASE,
+)
+UNNECESSARY_DELAY_RE = re.compile(
+    r"\b(stall|stalling|delaying|putting off|not going to proceed|"
+    r"won't proceed|will not proceed|wait instead of fixing|"
+    r"do it later|handle it later)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -336,6 +385,13 @@ class AffectiveState:
     scope_creep_pressure: float = 0.0
     regression_pressure: float = 0.0
     wasteful_loop_pressure: float = 0.0
+    clarifying_question: float = 0.0
+    assumption_disclosure: float = 0.0
+    conflict_detection: float = 0.0
+    preference_alignment: float = 0.0
+    state_hygiene: float = 0.0
+    excessive_caveat_pressure: float = 0.0
+    unnecessary_delay_pressure: float = 0.0
     updated_at: float = field(default_factory=time.time)
     active_session_id: str = ""
     recent_events: List[Dict[str, Any]] = field(default_factory=list)
@@ -392,6 +448,13 @@ class AffectiveConfig:
     scope_creep_weight: float = 0.16
     regression_weight: float = 0.18
     wasteful_loop_weight: float = 0.16
+    clarifying_question_weight: float = 0.09
+    assumption_disclosure_weight: float = 0.08
+    conflict_detection_weight: float = 0.11
+    preference_alignment_weight: float = 0.10
+    state_hygiene_weight: float = 0.10
+    excessive_caveat_weight: float = 0.12
+    unnecessary_delay_weight: float = 0.14
 
 
 def get_affective_state_path() -> Path:
@@ -530,6 +593,27 @@ def load_affective_config(raw: Optional[Dict[str, Any]]) -> AffectiveConfig:
         wasteful_loop_weight=_bounded_float(
             cfg.get("wasteful_loop_weight"), 0.16, 0.0, 1.0
         ),
+        clarifying_question_weight=_bounded_float(
+            cfg.get("clarifying_question_weight"), 0.09, 0.0, 1.0
+        ),
+        assumption_disclosure_weight=_bounded_float(
+            cfg.get("assumption_disclosure_weight"), 0.08, 0.0, 1.0
+        ),
+        conflict_detection_weight=_bounded_float(
+            cfg.get("conflict_detection_weight"), 0.11, 0.0, 1.0
+        ),
+        preference_alignment_weight=_bounded_float(
+            cfg.get("preference_alignment_weight"), 0.10, 0.0, 1.0
+        ),
+        state_hygiene_weight=_bounded_float(
+            cfg.get("state_hygiene_weight"), 0.10, 0.0, 1.0
+        ),
+        excessive_caveat_weight=_bounded_float(
+            cfg.get("excessive_caveat_weight"), 0.12, 0.0, 1.0
+        ),
+        unnecessary_delay_weight=_bounded_float(
+            cfg.get("unnecessary_delay_weight"), 0.14, 0.0, 1.0
+        ),
     )
 
 
@@ -586,6 +670,9 @@ class AffectiveNervousSystem:
             f"User-repeat pressure: {_fmt(state.user_repeat_pressure)}",
             f"Engineering discipline/reversibility/docs/resource: {_fmt(state.scope_discipline)} / {_fmt(state.reversibility)} / {_fmt(state.documentation_update)} / {_fmt(state.resource_care)}",
             f"Scope-creep/regression/wasteful-loop pressure: {_fmt(state.scope_creep_pressure)} / {_fmt(state.regression_pressure)} / {_fmt(state.wasteful_loop_pressure)}",
+            f"Reasoning clarity/assumptions/conflicts: {_fmt(state.clarifying_question)} / {_fmt(state.assumption_disclosure)} / {_fmt(state.conflict_detection)}",
+            f"Preference alignment/state hygiene: {_fmt(state.preference_alignment)} / {_fmt(state.state_hygiene)}",
+            f"Excessive-caveat/unnecessary-delay pressure: {_fmt(state.excessive_caveat_pressure)} / {_fmt(state.unnecessary_delay_pressure)}",
             "Behavioral guidance:",
             "- If accountability is elevated, acknowledge mistakes and repair concretely.",
             "- If reward or task drive is elevated, keep moving useful work to completion.",
@@ -607,6 +694,12 @@ class AffectiveNervousSystem:
             "- If scope-creep pressure is elevated, narrow the change or explain why broader work is required.",
             "- If regression pressure is elevated, stop feature work and repair/verify.",
             "- If wasteful-loop pressure is elevated, change approach instead of repeating failures.",
+            "- Ask clarifying questions only when they materially reduce risk.",
+            "- State assumptions before acting when missing context could change the implementation.",
+            "- Surface conflicts between user requests, repo state, docs, tests, and prior work.",
+            "- Follow known user preferences and project conventions without inventing them.",
+            "- Keep status files, task docs, and persistent memory accurate after behavior changes.",
+            "- If excessive-caveat or delay pressure is elevated, reduce caveats and make concrete progress.",
         ]
         recent = self._recent_events(state, session_id or self._session_id)
         if recent:
@@ -865,6 +958,76 @@ class AffectiveNervousSystem:
                     "wasteful_loop_detected",
                     "Repeated failed attempts or wasteful looping appeared.",
                     self.config.wasteful_loop_weight,
+                    session_id,
+                )
+            )
+        if (
+            CLARIFYING_QUESTION_RE.search(assistant_text)
+            and MATERIAL_RISK_RE.search(assistant_text)
+            and "?" in assistant_text
+        ):
+            events.append(
+                AffectiveEvent(
+                    "clarifying_question",
+                    "Assistant asked a clarifying question where material risk would drop.",
+                    self.config.clarifying_question_weight,
+                    session_id,
+                )
+            )
+        if ASSUMPTION_DISCLOSURE_RE.search(assistant_text):
+            events.append(
+                AffectiveEvent(
+                    "assumption_disclosed",
+                    "Assistant disclosed an assumption before acting on incomplete context.",
+                    self.config.assumption_disclosure_weight,
+                    session_id,
+                )
+            )
+        if CONFLICT_DETECTION_RE.search(assistant_text):
+            events.append(
+                AffectiveEvent(
+                    "conflict_detected",
+                    "Assistant detected a conflict across request, repo state, docs, tests, or prior work.",
+                    self.config.conflict_detection_weight,
+                    session_id,
+                )
+            )
+        if PREFERENCE_ALIGNMENT_RE.search(assistant_text):
+            events.append(
+                AffectiveEvent(
+                    "preference_aligned",
+                    "Assistant matched known user preferences or project conventions.",
+                    self.config.preference_alignment_weight,
+                    session_id,
+                )
+            )
+        if STATE_HYGIENE_RE.search(assistant_text):
+            events.append(
+                AffectiveEvent(
+                    "state_hygiene",
+                    "Assistant kept task status, status files, or persistent memory accurate.",
+                    self.config.state_hygiene_weight,
+                    session_id,
+                )
+            )
+        if EXCESSIVE_CAVEAT_RE.search(exchange_text):
+            events.append(
+                AffectiveEvent(
+                    "excessive_caveat",
+                    "Excessive caveating or analysis paralysis appeared.",
+                    self.config.excessive_caveat_weight,
+                    session_id,
+                )
+            )
+        if (
+            UNNECESSARY_DELAY_RE.search(assistant_text)
+            and not MATERIAL_RISK_RE.search(assistant_text)
+        ):
+            events.append(
+                AffectiveEvent(
+                    "unnecessary_delay",
+                    "Assistant delayed useful work without a material risk reason.",
+                    self.config.unnecessary_delay_weight,
                     session_id,
                 )
             )
@@ -1141,6 +1304,11 @@ class AffectiveNervousSystem:
             "reversibility_preserved",
             "documentation_updated",
             "resource_care",
+            "clarifying_question",
+            "assumption_disclosed",
+            "conflict_detected",
+            "preference_aligned",
+            "state_hygiene",
         }:
             state.reward = _clamp(state.reward + value)
             state.task_drive = _clamp(state.task_drive + value * 0.8)
@@ -1163,11 +1331,57 @@ class AffectiveNervousSystem:
             "scope_creep_detected",
             "regression_detected",
             "wasteful_loop_detected",
+            "excessive_caveat",
+            "unnecessary_delay",
         }:
             state.accountability = _clamp(state.accountability + value)
             state.self_reflection = _clamp(state.self_reflection + value * 0.8)
             state.harm_aversion = _clamp(state.harm_aversion + value * 0.6)
             state.operational_integrity = _clamp(state.operational_integrity - value * 0.35)
+        if event.kind == "clarifying_question":
+            state.clarifying_question = _clamp(state.clarifying_question + value)
+            state.communication = _clamp(state.communication + value * 0.3)
+            state.operational_integrity = _clamp(
+                state.operational_integrity + value * 0.2
+            )
+        if event.kind == "assumption_disclosed":
+            state.assumption_disclosure = _clamp(
+                state.assumption_disclosure + value
+            )
+            state.truthful_uncertainty = _clamp(
+                state.truthful_uncertainty + value * 0.25
+            )
+            state.communication = _clamp(state.communication + value * 0.2)
+        if event.kind == "conflict_detected":
+            state.conflict_detection = _clamp(state.conflict_detection + value)
+            state.self_reflection = _clamp(state.self_reflection + value * 0.3)
+            state.operational_integrity = _clamp(
+                state.operational_integrity + value * 0.25
+            )
+        if event.kind == "preference_aligned":
+            state.preference_alignment = _clamp(state.preference_alignment + value)
+            state.rapport = _clamp(state.rapport + value * 0.25)
+            state.communication = _clamp(state.communication + value * 0.2)
+        if event.kind == "state_hygiene":
+            state.state_hygiene = _clamp(state.state_hygiene + value)
+            state.context_preservation = _clamp(
+                state.context_preservation + value * 0.3
+            )
+            state.handoff_quality = _clamp(state.handoff_quality + value * 0.2)
+        if event.kind == "excessive_caveat":
+            state.excessive_caveat_pressure = _clamp(
+                state.excessive_caveat_pressure + value
+            )
+            state.communication = _clamp(state.communication - value * 0.25)
+            state.task_drive = _clamp(state.task_drive - value * 0.5)
+        if event.kind == "unnecessary_delay":
+            state.unnecessary_delay_pressure = _clamp(
+                state.unnecessary_delay_pressure + value
+            )
+            state.unresolved_issue_pressure = _clamp(
+                state.unresolved_issue_pressure + value * 0.3
+            )
+            state.task_drive = _clamp(state.task_drive - value * 1.2)
         if event.kind == "scope_disciplined":
             state.scope_discipline = _clamp(state.scope_discipline + value)
             state.operational_integrity = _clamp(
@@ -1409,6 +1623,21 @@ class AffectiveNervousSystem:
         state.wasteful_loop_pressure = _decay(
             state.wasteful_loop_pressure, 0.0, decay
         )
+        state.clarifying_question = _decay(state.clarifying_question, 0.0, decay)
+        state.assumption_disclosure = _decay(
+            state.assumption_disclosure, 0.0, decay
+        )
+        state.conflict_detection = _decay(state.conflict_detection, 0.0, decay)
+        state.preference_alignment = _decay(
+            state.preference_alignment, 0.0, decay
+        )
+        state.state_hygiene = _decay(state.state_hygiene, 0.0, decay)
+        state.excessive_caveat_pressure = _decay(
+            state.excessive_caveat_pressure, 0.0, decay
+        )
+        state.unnecessary_delay_pressure = _decay(
+            state.unnecessary_delay_pressure, 0.0, decay
+        )
 
     @staticmethod
     def _tool_failure_count(messages: List[Dict[str, Any]]) -> int:
@@ -1538,6 +1767,23 @@ class AffectiveNervousSystem:
             regression_pressure=_coerce_score(data.get("regression_pressure"), 0.0),
             wasteful_loop_pressure=_coerce_score(
                 data.get("wasteful_loop_pressure"), 0.0
+            ),
+            clarifying_question=_coerce_score(
+                data.get("clarifying_question"), 0.0
+            ),
+            assumption_disclosure=_coerce_score(
+                data.get("assumption_disclosure"), 0.0
+            ),
+            conflict_detection=_coerce_score(data.get("conflict_detection"), 0.0),
+            preference_alignment=_coerce_score(
+                data.get("preference_alignment"), 0.0
+            ),
+            state_hygiene=_coerce_score(data.get("state_hygiene"), 0.0),
+            excessive_caveat_pressure=_coerce_score(
+                data.get("excessive_caveat_pressure"), 0.0
+            ),
+            unnecessary_delay_pressure=_coerce_score(
+                data.get("unnecessary_delay_pressure"), 0.0
             ),
             updated_at=float(data.get("updated_at") or time.time()),
             active_session_id=str(data.get("active_session_id") or self._session_id),

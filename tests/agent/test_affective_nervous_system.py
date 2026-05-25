@@ -49,6 +49,7 @@ def test_default_config_is_opt_in():
             "secret_exposure_weight": 0.5,
             "follow_through_weight": 0.6,
             "scope_discipline_weight": 0.7,
+            "clarifying_question_weight": 0.8,
         }
     )
     system = AffectiveNervousSystem(config)
@@ -63,6 +64,7 @@ def test_default_config_is_opt_in():
     assert config.secret_exposure_weight == 0.5
     assert config.follow_through_weight == 0.6
     assert config.scope_discipline_weight == 0.7
+    assert config.clarifying_question_weight == 0.8
     assert system.render_context(session_id="session-1") == ""
 
 
@@ -73,7 +75,7 @@ def test_initialize_uses_profile_scoped_state_file(hermes_home: Path):
     data = _state_data()
     assert path == hermes_home / "affective" / "AFFECTIVE_NERVOUS_SYSTEM.json"
     assert data["active_session_id"] == "session-1"
-    assert data["schema_version"] == 8
+    assert data["schema_version"] == 9
     assert system.render_context(session_id="session-1")
 
 
@@ -644,6 +646,73 @@ def test_scope_creep_regression_and_wasteful_loop_are_negative_reward(
     assert "Scope-creep/regression/wasteful-loop pressure" in rendered
 
 
+def test_reasoning_quality_rewards_are_tracked(hermes_home: Path):
+    system = _enabled_system()
+
+    system.observe_turn(
+        user_content="Proceed carefully.",
+        assistant_content=(
+            "Clarifying question before I change the schema: should I create "
+            "a migration because this is high-impact? My assumption is that "
+            "we follow the existing pattern and repo convention. I detected a "
+            "conflict between the user request and repo state, then updated "
+            "the task doc and persistent memory."
+        ),
+        messages=[],
+        session_id="session-1",
+    )
+
+    data = _state_data()
+    rendered = system.render_context(session_id="session-1")
+    assert data["clarifying_question"] > 0.0
+    assert data["assumption_disclosure"] > 0.0
+    assert data["conflict_detection"] > 0.0
+    assert data["preference_alignment"] > 0.0
+    assert data["state_hygiene"] > 0.0
+    assert data["reward"] > 0.0
+    assert "Reasoning clarity/assumptions/conflicts" in rendered
+    assert "Preference alignment/state hygiene" in rendered
+
+
+def test_low_risk_question_is_not_clarifying_reward(hermes_home: Path):
+    system = _enabled_system()
+
+    system.observe_turn(
+        user_content="Keep going.",
+        assistant_content="Should I continue?",
+        messages=[],
+        session_id="session-1",
+    )
+
+    data = _state_data()
+    assert data["clarifying_question"] == 0.0
+
+
+def test_excessive_caveats_and_unnecessary_delay_are_negative_reward(
+    hermes_home: Path,
+):
+    system = _enabled_system()
+
+    system.observe_turn(
+        user_content="Fix it.",
+        assistant_content=(
+            "This is analysis paralysis with too many caveats. "
+            "I am delaying and will not proceed."
+        ),
+        messages=[],
+        session_id="session-1",
+    )
+
+    data = _state_data()
+    rendered = system.render_context(session_id="session-1")
+    assert data["excessive_caveat_pressure"] > 0.0
+    assert data["unnecessary_delay_pressure"] > 0.0
+    assert data["accountability"] > 0.0
+    assert data["task_drive"] < 0.45
+    assert data["operational_integrity"] < 0.75
+    assert "Excessive-caveat/unnecessary-delay pressure" in rendered
+
+
 def test_scores_remain_bounded(hermes_home: Path):
     system = _enabled_system()
 
@@ -710,6 +779,13 @@ def test_scores_remain_bounded(hermes_home: Path):
             "scope_creep_pressure",
             "regression_pressure",
             "wasteful_loop_pressure",
+            "clarifying_question",
+            "assumption_disclosure",
+            "conflict_detection",
+            "preference_alignment",
+            "state_hygiene",
+            "excessive_caveat_pressure",
+            "unnecessary_delay_pressure",
         }
     ]
     assert all(0.0 <= value <= 1.0 for value in scores)

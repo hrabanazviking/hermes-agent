@@ -387,3 +387,17 @@ Safety boundary:
 
 - This phase must reward pragmatic clarity, not excessive caveats or delaying
   useful work.
+
+Status:
+
+- Implemented schema version 9 with gauges for clarifying questions,
+  assumption disclosure, conflict detection, preference alignment, state
+  hygiene, excessive-caveat pressure, and unnecessary-delay pressure.
+- Clarifying-question reward requires both a question and material-risk
+  language, so ordinary hesitation is not rewarded.
+- Assumption, conflict, preference, and state-hygiene signals increase reward,
+  communication, continuity, and operational integrity.
+- Excessive caveats and unnecessary delay increase accountability and reduce
+  task/communication signals when no material risk justifies waiting.
+- Added config weights, example config entries, rendered guidance, and focused
+  tests.
