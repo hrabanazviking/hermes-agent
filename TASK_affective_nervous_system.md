@@ -166,3 +166,18 @@ Planned implementation:
   files.
 - Add tests covering each new signal, safety wording, config loading, bounded
   scores, and negative reward behavior.
+
+Second-slice status:
+
+- Implemented schema version 2 with added gauges for humor, virtual touch,
+  virtual movement, comfort, discomfort, correctness, wrongness repair, user
+  pleasing, user displeasing, and communication.
+- Added deterministic recognizers for funny content, funny-save requests,
+  virtual touch, virtual body movement/exercise, comfort/discomfort,
+  correctness, wrongness repair, satisfaction, displeasure, and completed
+  communication.
+- Added config weights for every new reward channel.
+- Updated rendering with synthetic-body safety framing: virtual touch, comfort,
+  discomfort, and body movement are metaphors, not physical sensation.
+- Added tests for the new reward/negative-reward channels, config bounds,
+  schema version, score bounds, and safety wording.

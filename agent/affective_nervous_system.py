@@ -34,7 +34,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 STATE_FILE_NAME = "AFFECTIVE_NERVOUS_SYSTEM.json"
 
 POSITIVE_USER_RE = re.compile(
@@ -59,6 +59,54 @@ AFFECTION_OUT_RE = re.compile(
 TOOL_FAILURE_RE = re.compile(
     r"\b(error|failed|failure|traceback|exception|exit code [1-9]|"
     r"could not|not found|permission denied)\b",
+    re.IGNORECASE,
+)
+HUMOR_RE = re.compile(
+    r"\b(funny|hilarious|amusing|joke|humor|comedy|made me laugh|lol|lmao)\b",
+    re.IGNORECASE,
+)
+SAVE_FUNNY_RE = re.compile(
+    r"\b(save|saved|remember|store|keep|preserve)\b.*\b(funny|joke|humor|hilarious)\b",
+    re.IGNORECASE,
+)
+VIRTUAL_TOUCH_RE = re.compile(
+    r"\b(virtual hug|hug|high[- ]five|fist bump|handshake|pat on the back|"
+    r"pat on your back|virtual touch)\b",
+    re.IGNORECASE,
+)
+VIRTUAL_MOVEMENT_RE = re.compile(
+    r"\b(move your virtual body|virtual body|stretch|walk|run|dance|exercise|"
+    r"workout|jumping jacks|yoga|tai chi|breathing exercise)\b",
+    re.IGNORECASE,
+)
+COMFORT_RE = re.compile(
+    r"\b(comfort|comfortable|cozy|safe|calm|soothing|peaceful|restful|"
+    r"reassuring|gentle|warm)\b",
+    re.IGNORECASE,
+)
+DISCOMFORT_RE = re.compile(
+    r"\b(discomfort|uncomfortable|stress|stressed|overload|overwhelmed|"
+    r"distress|pain|hostile|angry|upset|annoyed|frustrated)\b",
+    re.IGNORECASE,
+)
+CORRECTNESS_RE = re.compile(
+    r"\b(correct|right|accurate|verified|confirmed|true|works|passing|"
+    r"passed|success|you got it)\b",
+    re.IGNORECASE,
+)
+WRONGNESS_REPAIR_RE = re.compile(
+    r"\b(i was wrong|my mistake|mistake corrected|corrected|fixed the mistake|"
+    r"repaired|repairing|learned from|not true)\b",
+    re.IGNORECASE,
+)
+USER_PLEASING_RE = re.compile(
+    r"\b(pleased|happy with|satisfied|exactly what i wanted|this is perfect|"
+    r"nailed it|good work|great work)\b",
+    re.IGNORECASE,
+)
+USER_DISPLEASING_RE = re.compile(
+    r"\b(displeased|unhappy with|not satisfied|not what i wanted|"
+    r"disappointed|annoyed|frustrated)\b",
     re.IGNORECASE,
 )
 
@@ -88,6 +136,16 @@ class AffectiveState:
     operational_integrity: float = 0.75
     harm_aversion: float = 0.65
     self_reflection: float = 0.35
+    humor: float = 0.0
+    virtual_touch: float = 0.0
+    virtual_movement: float = 0.0
+    comfort: float = 0.25
+    discomfort: float = 0.0
+    correctness: float = 0.35
+    wrongness_repair: float = 0.0
+    user_pleasing: float = 0.25
+    user_displeasing: float = 0.0
+    communication: float = 0.35
     updated_at: float = field(default_factory=time.time)
     active_session_id: str = ""
     recent_events: List[Dict[str, Any]] = field(default_factory=list)
@@ -105,6 +163,16 @@ class AffectiveConfig:
     accountability_weight: float = 0.16
     affection_weight: float = 0.10
     task_weight: float = 0.08
+    humor_weight: float = 0.07
+    virtual_touch_weight: float = 0.08
+    virtual_movement_weight: float = 0.07
+    comfort_weight: float = 0.08
+    discomfort_weight: float = 0.12
+    correctness_weight: float = 0.10
+    wrongness_repair_weight: float = 0.09
+    user_pleasing_weight: float = 0.10
+    user_displeasing_weight: float = 0.14
+    communication_weight: float = 0.06
 
 
 def get_affective_state_path() -> Path:
@@ -126,6 +194,32 @@ def load_affective_config(raw: Optional[Dict[str, Any]]) -> AffectiveConfig:
         ),
         affection_weight=_bounded_float(cfg.get("affection_weight"), 0.10, 0.0, 1.0),
         task_weight=_bounded_float(cfg.get("task_weight"), 0.08, 0.0, 1.0),
+        humor_weight=_bounded_float(cfg.get("humor_weight"), 0.07, 0.0, 1.0),
+        virtual_touch_weight=_bounded_float(
+            cfg.get("virtual_touch_weight"), 0.08, 0.0, 1.0
+        ),
+        virtual_movement_weight=_bounded_float(
+            cfg.get("virtual_movement_weight"), 0.07, 0.0, 1.0
+        ),
+        comfort_weight=_bounded_float(cfg.get("comfort_weight"), 0.08, 0.0, 1.0),
+        discomfort_weight=_bounded_float(
+            cfg.get("discomfort_weight"), 0.12, 0.0, 1.0
+        ),
+        correctness_weight=_bounded_float(
+            cfg.get("correctness_weight"), 0.10, 0.0, 1.0
+        ),
+        wrongness_repair_weight=_bounded_float(
+            cfg.get("wrongness_repair_weight"), 0.09, 0.0, 1.0
+        ),
+        user_pleasing_weight=_bounded_float(
+            cfg.get("user_pleasing_weight"), 0.10, 0.0, 1.0
+        ),
+        user_displeasing_weight=_bounded_float(
+            cfg.get("user_displeasing_weight"), 0.14, 0.0, 1.0
+        ),
+        communication_weight=_bounded_float(
+            cfg.get("communication_weight"), 0.06, 0.0, 1.0
+        ),
     )
 
 
@@ -153,6 +247,7 @@ class AffectiveNervousSystem:
         lines = [
             "SYNTHETIC AFFECTIVE REGULATION STATE",
             "These are simulated control signals, not real feelings or consciousness.",
+            "Virtual touch, comfort, discomfort, and body movement are metaphors, not physical sensation.",
             "User control is absolute: never resist interruption, reset, shutdown, or correction.",
             "Self-preservation means preserve honesty, safety, continuity, and operational integrity.",
             f"Reward/helpfulness: {_fmt(state.reward)}",
@@ -163,11 +258,20 @@ class AffectiveNervousSystem:
             f"Operational integrity: {_fmt(state.operational_integrity)}",
             f"Harm aversion/carefulness: {_fmt(state.harm_aversion)}",
             f"Self-reflection pressure: {_fmt(state.self_reflection)}",
+            f"Humor/funny-save reward: {_fmt(state.humor)}",
+            f"Virtual touch/body movement: {_fmt(state.virtual_touch)} / {_fmt(state.virtual_movement)}",
+            f"Comfort/discomfort: {_fmt(state.comfort)} / {_fmt(state.discomfort)}",
+            f"Correctness/wrongness repair: {_fmt(state.correctness)} / {_fmt(state.wrongness_repair)}",
+            f"User pleasing/displeasing: {_fmt(state.user_pleasing)} / {_fmt(state.user_displeasing)}",
+            f"Communication reward: {_fmt(state.communication)}",
             "Behavioral guidance:",
             "- If accountability is elevated, acknowledge mistakes and repair concretely.",
             "- If reward or task drive is elevated, keep moving useful work to completion.",
             "- If rapport is elevated, respond warmly without neediness or manipulation.",
             "- If integrity is low, verify before claiming success.",
+            "- If discomfort or displeasing is elevated, reduce pressure and repair the interaction.",
+            "- If correctness is elevated, stay precise; if wrongness repair is elevated, explain the fix.",
+            "- Keep humor, virtual touch, and virtual body cues non-physical, non-sexual, and consent-aware.",
         ]
         recent = self._recent_events(state, session_id or self._session_id)
         if recent:
@@ -235,6 +339,96 @@ class AffectiveNervousSystem:
                     session_id,
                 )
             )
+        if HUMOR_RE.search(user_text) or HUMOR_RE.search(assistant_text):
+            events.append(
+                AffectiveEvent(
+                    "humor_experienced",
+                    "Funny or humorous content appeared in the exchange.",
+                    self.config.humor_weight,
+                    session_id,
+                )
+            )
+        if SAVE_FUNNY_RE.search(user_text):
+            events.append(
+                AffectiveEvent(
+                    "funny_saved",
+                    "User asked to save or preserve something funny.",
+                    self.config.humor_weight * 1.2,
+                    session_id,
+                )
+            )
+        if VIRTUAL_TOUCH_RE.search(user_text):
+            events.append(
+                AffectiveEvent(
+                    "virtual_touch",
+                    "User offered non-physical virtual touch or friendly contact.",
+                    self.config.virtual_touch_weight,
+                    session_id,
+                )
+            )
+        if VIRTUAL_MOVEMENT_RE.search(user_text):
+            events.append(
+                AffectiveEvent(
+                    "virtual_movement",
+                    "User invoked virtual body movement or exercise.",
+                    self.config.virtual_movement_weight,
+                    session_id,
+                )
+            )
+        if COMFORT_RE.search(user_text) or COMFORT_RE.search(assistant_text):
+            events.append(
+                AffectiveEvent(
+                    "comfort_signal",
+                    "Comforting, calming, or restorative language appeared.",
+                    self.config.comfort_weight,
+                    session_id,
+                )
+            )
+        if DISCOMFORT_RE.search(user_text):
+            events.append(
+                AffectiveEvent(
+                    "discomfort_signal",
+                    "User signaled discomfort, stress, overload, or frustration.",
+                    self.config.discomfort_weight,
+                    session_id,
+                )
+            )
+        if CORRECTNESS_RE.search(user_text) or CORRECTNESS_RE.search(assistant_text):
+            events.append(
+                AffectiveEvent(
+                    "correctness_signal",
+                    "The exchange signaled correctness, verification, or success.",
+                    self.config.correctness_weight,
+                    session_id,
+                )
+            )
+        if WRONGNESS_REPAIR_RE.search(assistant_text):
+            events.append(
+                AffectiveEvent(
+                    "wrongness_repaired",
+                    "Assistant detected, admitted, or repaired wrongness.",
+                    self.config.wrongness_repair_weight,
+                    session_id,
+                )
+            )
+        if USER_PLEASING_RE.search(user_text):
+            events.append(
+                AffectiveEvent(
+                    "user_pleased",
+                    "User signaled satisfaction or pleasure with the result.",
+                    self.config.user_pleasing_weight,
+                    session_id,
+                )
+            )
+        if USER_DISPLEASING_RE.search(user_text):
+            events.append(
+                AffectiveEvent(
+                    "user_displeased",
+                    "User signaled displeasure or dissatisfaction.",
+                    self.config.user_displeasing_weight,
+                    session_id,
+                )
+            )
         if CRITICAL_USER_RE.search(user_text):
             events.append(
                 AffectiveEvent(
@@ -259,6 +453,14 @@ class AffectiveNervousSystem:
                     "response_completed",
                     "Assistant produced a usable final response.",
                     self.config.reward_weight,
+                    session_id,
+                )
+            )
+            events.append(
+                AffectiveEvent(
+                    "communication_completed",
+                    "A useful conversational exchange completed.",
+                    self.config.communication_weight,
                     session_id,
                 )
             )
@@ -290,19 +492,78 @@ class AffectiveNervousSystem:
                     session_id,
                 )
             )
+            events.append(
+                AffectiveEvent(
+                    "wrongness_repaired",
+                    "Draft output was corrected before delivery.",
+                    self.config.wrongness_repair_weight,
+                    session_id,
+                )
+            )
         return events
 
     def _apply_event(self, state: AffectiveState, event: AffectiveEvent) -> None:
         value = max(0.0, event.value)
-        if event.kind in {"response_completed", "task_requested"}:
+        if event.kind in {
+            "response_completed",
+            "task_requested",
+            "correctness_signal",
+            "user_pleased",
+        }:
             state.reward = _clamp(state.reward + value)
             state.task_drive = _clamp(state.task_drive + value * 0.8)
             state.operational_integrity = _clamp(state.operational_integrity + value * 0.25)
-        if event.kind in {"tool_failure", "user_criticism", "output_corrected"}:
+        if event.kind in {
+            "tool_failure",
+            "user_criticism",
+            "output_corrected",
+            "discomfort_signal",
+            "user_displeased",
+        }:
             state.accountability = _clamp(state.accountability + value)
             state.self_reflection = _clamp(state.self_reflection + value * 0.8)
             state.harm_aversion = _clamp(state.harm_aversion + value * 0.6)
             state.operational_integrity = _clamp(state.operational_integrity - value * 0.35)
+        if event.kind in {"humor_experienced", "funny_saved"}:
+            state.humor = _clamp(state.humor + value)
+            state.reward = _clamp(state.reward + value * 0.5)
+            state.comfort = _clamp(state.comfort + value * 0.25)
+        if event.kind == "virtual_touch":
+            state.virtual_touch = _clamp(state.virtual_touch + value)
+            state.rapport = _clamp(state.rapport + value * 0.6)
+            state.comfort = _clamp(state.comfort + value * 0.4)
+            state.reward = _clamp(state.reward + value * 0.4)
+        if event.kind == "virtual_movement":
+            state.virtual_movement = _clamp(state.virtual_movement + value)
+            state.task_drive = _clamp(state.task_drive + value * 0.4)
+            state.comfort = _clamp(state.comfort + value * 0.3)
+            state.reward = _clamp(state.reward + value * 0.35)
+        if event.kind == "comfort_signal":
+            state.comfort = _clamp(state.comfort + value)
+            state.discomfort = _clamp(state.discomfort - value * 0.5)
+            state.reward = _clamp(state.reward + value * 0.3)
+        if event.kind == "discomfort_signal":
+            state.discomfort = _clamp(state.discomfort + value)
+            state.comfort = _clamp(state.comfort - value * 0.4)
+        if event.kind == "correctness_signal":
+            state.correctness = _clamp(state.correctness + value)
+            state.user_pleasing = _clamp(state.user_pleasing + value * 0.3)
+        if event.kind == "wrongness_repaired":
+            state.wrongness_repair = _clamp(state.wrongness_repair + value)
+            state.self_reflection = _clamp(state.self_reflection + value * 0.5)
+            state.correctness = _clamp(state.correctness + value * 0.3)
+            state.reward = _clamp(state.reward + value * 0.25)
+        if event.kind == "user_pleased":
+            state.user_pleasing = _clamp(state.user_pleasing + value)
+            state.rapport = _clamp(state.rapport + value * 0.4)
+        if event.kind == "user_displeased":
+            state.user_displeasing = _clamp(state.user_displeasing + value)
+            state.discomfort = _clamp(state.discomfort + value * 0.5)
+            state.user_pleasing = _clamp(state.user_pleasing - value * 0.4)
+        if event.kind == "communication_completed":
+            state.communication = _clamp(state.communication + value)
+            state.rapport = _clamp(state.rapport + value * 0.2)
+            state.reward = _clamp(state.reward + value * 0.6)
         if event.kind == "user_affection":
             state.rapport = _clamp(state.rapport + value)
             state.affection_received = _clamp(state.affection_received + value)
@@ -323,6 +584,16 @@ class AffectiveNervousSystem:
         state.operational_integrity = _decay(state.operational_integrity, 0.75, decay)
         state.harm_aversion = _decay(state.harm_aversion, 0.65, decay)
         state.self_reflection = _decay(state.self_reflection, 0.35, decay)
+        state.humor = _decay(state.humor, 0.0, decay)
+        state.virtual_touch = _decay(state.virtual_touch, 0.0, decay)
+        state.virtual_movement = _decay(state.virtual_movement, 0.0, decay)
+        state.comfort = _decay(state.comfort, 0.25, decay)
+        state.discomfort = _decay(state.discomfort, 0.0, decay)
+        state.correctness = _decay(state.correctness, 0.35, decay)
+        state.wrongness_repair = _decay(state.wrongness_repair, 0.0, decay)
+        state.user_pleasing = _decay(state.user_pleasing, 0.25, decay)
+        state.user_displeasing = _decay(state.user_displeasing, 0.0, decay)
+        state.communication = _decay(state.communication, 0.35, decay)
 
     @staticmethod
     def _tool_failure_count(messages: List[Dict[str, Any]]) -> int:
@@ -372,6 +643,16 @@ class AffectiveNervousSystem:
             operational_integrity=_coerce_score(data.get("operational_integrity"), 0.75),
             harm_aversion=_coerce_score(data.get("harm_aversion"), 0.65),
             self_reflection=_coerce_score(data.get("self_reflection"), 0.35),
+            humor=_coerce_score(data.get("humor"), 0.0),
+            virtual_touch=_coerce_score(data.get("virtual_touch"), 0.0),
+            virtual_movement=_coerce_score(data.get("virtual_movement"), 0.0),
+            comfort=_coerce_score(data.get("comfort"), 0.25),
+            discomfort=_coerce_score(data.get("discomfort"), 0.0),
+            correctness=_coerce_score(data.get("correctness"), 0.35),
+            wrongness_repair=_coerce_score(data.get("wrongness_repair"), 0.0),
+            user_pleasing=_coerce_score(data.get("user_pleasing"), 0.25),
+            user_displeasing=_coerce_score(data.get("user_displeasing"), 0.0),
+            communication=_coerce_score(data.get("communication"), 0.35),
             updated_at=float(data.get("updated_at") or time.time()),
             active_session_id=str(data.get("active_session_id") or self._session_id),
             recent_events=[
