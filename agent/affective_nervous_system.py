@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import tempfile
@@ -36,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 9
 STATE_FILE_NAME = "AFFECTIVE_NERVOUS_SYSTEM.json"
+MAX_EVENT_TEXT_CHARS = 240
 
 POSITIVE_USER_RE = re.compile(
     r"\b(thanks|thank you|good job|great job|excellent|perfect|love you|"
@@ -466,7 +468,7 @@ def load_affective_config(raw: Optional[Dict[str, Any]]) -> AffectiveConfig:
     """Build affective config from a user config mapping."""
     cfg = raw if isinstance(raw, dict) else {}
     return AffectiveConfig(
-        enabled=bool(cfg.get("enabled", False)),
+        enabled=_bool_value(cfg.get("enabled"), False),
         render_char_budget=_positive_int(cfg.get("render_char_budget"), 2600),
         max_recent_events=_positive_int(cfg.get("max_recent_events"), 40),
         decay=_bounded_float(cfg.get("decay"), 0.04, 0.0, 0.5),
@@ -705,7 +707,9 @@ class AffectiveNervousSystem:
         if recent:
             lines.append("Recent regulatory events:")
             for event in recent[-5:]:
-                lines.append(f"- {event.get('kind')}: {event.get('message')}")
+                kind = _safe_event_text(event.get("kind"), fallback="event")
+                message = _safe_event_text(event.get("message"), fallback="")
+                lines.append(f"- {kind}: {message}")
         rendered = "\n".join(lines)
         if len(rendered) > self.config.render_char_budget:
             rendered = rendered[: self.config.render_char_budget].rstrip()
@@ -1641,18 +1645,22 @@ class AffectiveNervousSystem:
 
     @staticmethod
     def _tool_failure_count(messages: List[Dict[str, Any]]) -> int:
+        if not isinstance(messages, list):
+            return 0
         count = 0
         for msg in messages:
             if not isinstance(msg, dict) or msg.get("role") != "tool":
                 continue
             content = msg.get("content")
-            text = content if isinstance(content, str) else str(content or "")
+            text = _safe_str(content)
             if TOOL_FAILURE_RE.search(text):
                 count += 1
         return count
 
     @staticmethod
     def _messages_text(messages: List[Dict[str, Any]]) -> str:
+        if not isinstance(messages, list):
+            return ""
         parts: List[str] = []
         for msg in messages:
             if not isinstance(msg, dict):
@@ -1661,7 +1669,7 @@ class AffectiveNervousSystem:
             if isinstance(content, str):
                 parts.append(content)
             elif content is not None:
-                parts.append(str(content))
+                parts.append(_safe_str(content))
         return "\n".join(parts)
 
     @staticmethod
@@ -1786,12 +1794,11 @@ class AffectiveNervousSystem:
             unnecessary_delay_pressure=_coerce_score(
                 data.get("unnecessary_delay_pressure"), 0.0
             ),
-            updated_at=float(data.get("updated_at") or time.time()),
+            updated_at=_coerce_timestamp(data.get("updated_at")),
             active_session_id=str(data.get("active_session_id") or self._session_id),
-            recent_events=[
-                event for event in data.get("recent_events", [])
-                if isinstance(event, dict)
-            ],
+            recent_events=_coerce_recent_events(
+                data.get("recent_events"), self.config.max_recent_events
+            ),
         )
 
     def _write_unlocked(self, state: AffectiveState) -> None:
@@ -1852,14 +1859,20 @@ def _fmt(value: float) -> str:
 
 
 def _clamp(value: float) -> float:
-    return max(0.0, min(1.0, float(value)))
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        return 0.0
+    return max(0.0, min(1.0, parsed))
 
 
 def _coerce_score(value: Any, default: float) -> float:
     try:
-        return _clamp(float(value))
-    except (TypeError, ValueError):
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError):
         return default
+    if not math.isfinite(parsed):
+        return default
+    return _clamp(parsed)
 
 
 def _decay(value: float, baseline: float, amount: float) -> float:
@@ -1867,9 +1880,11 @@ def _decay(value: float, baseline: float, amount: float) -> float:
 
 
 def _positive_int(value: Any, default: int) -> int:
+    if isinstance(value, bool):
+        return default
     try:
         parsed = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
     return parsed if parsed > 0 else default
 
@@ -1877,9 +1892,81 @@ def _positive_int(value: Any, default: int) -> int:
 def _bounded_float(value: Any, default: float, low: float, high: float) -> float:
     try:
         parsed = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        return default
+    if not math.isfinite(parsed):
         return default
     return max(low, min(high, parsed))
+
+
+def _bool_value(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off", ""}:
+            return False
+        return default
+    if value is None:
+        return default
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            return bool(value) if math.isfinite(float(value)) else default
+        except (TypeError, ValueError, OverflowError):
+            return default
+    return default
+
+
+def _safe_str(value: Any, fallback: str = "") -> str:
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return fallback
+    try:
+        return str(value)
+    except Exception:
+        return fallback
+
+
+def _safe_event_text(value: Any, fallback: str = "") -> str:
+    text = " ".join(_safe_str(value, fallback).split())
+    if not text:
+        return fallback
+    if len(text) > MAX_EVENT_TEXT_CHARS:
+        return text[:MAX_EVENT_TEXT_CHARS].rstrip() + "..."
+    return text
+
+
+def _coerce_timestamp(value: Any) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return time.time()
+    return parsed if math.isfinite(parsed) and parsed >= 0.0 else time.time()
+
+
+def _coerce_recent_events(value: Any, max_events: int) -> List[Dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    limit = _positive_int(max_events, 40)
+    events: List[Dict[str, Any]] = []
+    for event in value[-limit:]:
+        if not isinstance(event, dict):
+            continue
+        events.append(
+            {
+                "kind": _safe_event_text(event.get("kind"), fallback="event"),
+                "message": _safe_event_text(event.get("message"), fallback=""),
+                "value": _coerce_score(event.get("value"), 0.0),
+                "session_id": _safe_event_text(
+                    event.get("session_id"), fallback=""
+                ),
+                "created_at": _coerce_timestamp(event.get("created_at")),
+            }
+        )
+    return events
 
 
 __all__ = [
