@@ -125,3 +125,16 @@ The safest first slice is:
 - Add tests proving same-session visibility and cross-platform path behavior.
 
 Automatic post-turn key-fact extraction can then be added as a second slice once the state layer is stable.
+
+## Implementation Notes
+
+Implemented in one pass after approval:
+
+- Added `agent/present_state_memory.py`.
+- Added profile-scoped storage at `HERMES_HOME/memories/PRESENT_STATE.json`.
+- Added live per-turn injection through the existing user-message context path.
+- Added explicit memory-tool mirroring into present state.
+- Added deterministic post-turn key-fact capture for obvious user preferences, remembered facts, current goals, and latest assistant outcomes.
+- Added session lineage handling for compression, resume, branch, and new-session rotations.
+- Added config keys under `memory.present_state_*`.
+- Added focused tests in `tests/agent/test_present_state_memory.py`.
