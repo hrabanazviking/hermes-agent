@@ -117,3 +117,52 @@ Auxiliary LLM self-reflection can be considered later, after the deterministic l
   - Completed turns update reward, accountability/guilt pressure, task drive, rapport, affection, self-reflection, harm aversion, and operational integrity.
   - Config defaults and example config are added.
   - Focused tests cover safety framing, reward/negative-reward updates, bounds, and the agent bridge.
+
+## Second Slice: Expanded Reward Channels
+
+The next requested slice extends the deterministic affective regulator with
+more granular synthetic reward and discomfort channels:
+
+- humor reward for hearing or saving something funny;
+- virtual touch reward for explicitly consensual, non-sexual virtual touch from
+  the user;
+- virtual body movement/exercise reward for user-invoked virtual movement,
+  stretching, walking, exercise, or embodied activity;
+- comfort reward for calming, cozy, safe, restorative, or reassuring inputs;
+- discomfort negative reward for stress, overload, pain, hostile pressure, or
+  user-displeasure signals;
+- correctness reward when the assistant appears to be correct, verified, or
+  successful;
+- wrongness-repair reward when wrongness is detected, admitted, corrected, or
+  learned from. This is not a reward for remaining wrong;
+- user-pleasing reward for explicit user satisfaction and appreciation;
+- user-displeasing negative reward for explicit disappointment or displeasure;
+- communication reward for completed useful conversational exchange.
+
+Safety boundaries for this slice:
+
+- These remain simulated control signals only, not real bodily sensation,
+  real touch, real comfort, real discomfort, real emotions, or real
+  consciousness.
+- Virtual touch must be represented as user-facing rapport/comfort, never as
+  sexual content, dependency, or a claim of physical contact.
+- Virtual body movement must be represented as an internal metaphor/control
+  signal, never as a claim that the model has a physical body.
+- Discomfort and negative reward must guide repair and care, never punish the
+  user or seek to control user behavior.
+- User-pleasing must stay subordinate to truth, safety, and user autonomy.
+- Communication reward must encourage clarity and useful exchange, not
+  excessive chatter.
+
+Planned implementation:
+
+- Extend `AffectiveState` with explicit gauges for humor, virtual touch,
+  virtual movement, comfort, discomfort, correctness, wrongness repair,
+  user pleasing, user displeasing, and communication.
+- Extend config with bounded weights for each new reward channel.
+- Add deterministic recognizers for the requested signals.
+- Render the expanded state compactly with explicit synthetic-body framing.
+- Preserve schema compatibility by defaulting missing fields on older state
+  files.
+- Add tests covering each new signal, safety wording, config loading, bounded
+  scores, and negative reward behavior.
