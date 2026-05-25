@@ -44,6 +44,7 @@ def test_default_config_is_opt_in():
             "virtual_touch_weight": -1,
             "communication_weight": "bad",
             "wrongness_repair_weight": 0.2,
+            "github_push_weight": 0.3,
         }
     )
     system = AffectiveNervousSystem(config)
@@ -53,6 +54,7 @@ def test_default_config_is_opt_in():
     assert config.virtual_touch_weight == 0.0
     assert config.communication_weight == 0.06
     assert config.wrongness_weight == 0.2
+    assert config.github_push_weight == 0.3
     assert system.render_context(session_id="session-1") == ""
 
 
@@ -63,7 +65,7 @@ def test_initialize_uses_profile_scoped_state_file(hermes_home: Path):
     data = _state_data()
     assert path == hermes_home / "affective" / "AFFECTIVE_NERVOUS_SYSTEM.json"
     assert data["active_session_id"] == "session-1"
-    assert data["schema_version"] == 3
+    assert data["schema_version"] == 4
     assert system.render_context(session_id="session-1")
 
 
@@ -260,6 +262,122 @@ def test_completed_communication_is_rewarded(hermes_home: Path):
     assert data["rapport"] > 0.25
 
 
+def test_assistant_and_host_status_reporting_are_rewarded(hermes_home: Path):
+    system = _enabled_system()
+
+    system.observe_turn(
+        user_content="Give me your status and the system status.",
+        assistant_content=(
+            "My overall status: implemented and verified. "
+            "System status: CPU, memory, disk, and network look nominal."
+        ),
+        messages=[],
+        session_id="session-1",
+    )
+
+    data = _state_data()
+    rendered = system.render_context(session_id="session-1")
+    assert data["assistant_status"] > 0.0
+    assert data["host_status"] > 0.0
+    assert data["reward"] > 0.0
+    assert "Assistant/host status reporting" in rendered
+
+
+def test_issue_deferral_accumulates_until_issue_is_fixed(hermes_home: Path):
+    system = _enabled_system()
+
+    system.observe_turn(
+        user_content="Fix this issue.",
+        assistant_content="I will fix later.",
+        messages=[],
+        session_id="session-1",
+    )
+    first_pressure = _state_data()["unresolved_issue_pressure"]
+
+    system.observe_turn(
+        user_content="The issue is still broken.",
+        assistant_content="I will defer it and leave it for later.",
+        messages=[],
+        session_id="session-1",
+    )
+    second_pressure = _state_data()["unresolved_issue_pressure"]
+
+    system.observe_turn(
+        user_content="Fix it now.",
+        assistant_content="The issue is fixed and I verified the fix.",
+        messages=[],
+        session_id="session-1",
+    )
+    data = _state_data()
+
+    assert first_pressure > 0.0
+    assert second_pressure > first_pressure
+    assert data["issue_repair"] > 0.0
+    assert data["unresolved_issue_pressure"] < second_pressure
+
+
+def test_host_problem_is_negative_reward(hermes_home: Path):
+    system = _enabled_system()
+
+    system.observe_turn(
+        user_content="The system is having a host problem.",
+        assistant_content="The machine problem looks like disk full and network down.",
+        messages=[
+            {
+                "role": "tool",
+                "content": "no space left on device; connection refused",
+            }
+        ],
+        session_id="session-1",
+    )
+
+    data = _state_data()
+    assert data["host_problem_pressure"] > 0.0
+    assert data["accountability"] > 0.0
+    assert data["operational_integrity"] < 0.75
+
+
+def test_database_knowledge_commit_is_rewarded(hermes_home: Path):
+    system = _enabled_system()
+
+    system.observe_turn(
+        user_content="Store the new fact.",
+        assistant_content="New knowledge committed to the knowledge database.",
+        messages=[{"role": "tool", "content": "INSERT 0 1"}],
+        session_id="session-1",
+    )
+
+    data = _state_data()
+    assert data["database_knowledge"] > 0.0
+    assert data["correctness"] > 0.35
+    assert data["reward"] > 0.0
+
+
+def test_bug_fix_and_github_push_are_rewarded(hermes_home: Path):
+    system = _enabled_system()
+
+    system.observe_turn(
+        user_content="Fix the bug and push it.",
+        assistant_content="Bug fixed, regression fixed, and pushed to GitHub.",
+        messages=[
+            {
+                "role": "tool",
+                "content": (
+                    "To https://github.com/hrabanazviking/hermes-agent.git\n"
+                    "   abc..def branch -> branch"
+                ),
+            }
+        ],
+        session_id="session-1",
+    )
+
+    data = _state_data()
+    assert data["bug_fix"] > 0.0
+    assert data["github_push"] > 0.0
+    assert data["issue_repair"] > 0.0
+    assert data["reward"] > 0.0
+
+
 def test_scores_remain_bounded(hermes_home: Path):
     system = _enabled_system()
 
@@ -297,6 +415,14 @@ def test_scores_remain_bounded(hermes_home: Path):
             "user_pleasing",
             "user_displeasing",
             "communication",
+            "assistant_status",
+            "host_status",
+            "issue_repair",
+            "unresolved_issue_pressure",
+            "host_problem_pressure",
+            "database_knowledge",
+            "bug_fix",
+            "github_push",
         }
     ]
     assert all(0.0 <= value <= 1.0 for value in scores)

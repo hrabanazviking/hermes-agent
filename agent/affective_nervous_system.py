@@ -34,7 +34,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 STATE_FILE_NAME = "AFFECTIVE_NERVOUS_SYSTEM.json"
 
 POSITIVE_USER_RE = re.compile(
@@ -109,6 +109,52 @@ USER_DISPLEASING_RE = re.compile(
     r"disappointed|annoyed|frustrated)\b",
     re.IGNORECASE,
 )
+ASSISTANT_STATUS_RE = re.compile(
+    r"\b(my overall status|my status|current status|status update|"
+    r"worktree is clean|branch is|tests passed|verification passed)\b",
+    re.IGNORECASE,
+)
+HOST_STATUS_RE = re.compile(
+    r"\b(system status|host status|machine status|runtime status|"
+    r"cpu|memory|disk|network|uptime|load average|running on)\b",
+    re.IGNORECASE,
+)
+ISSUE_TERMS_RE = re.compile(
+    r"\b(problem|issue|bug|broken|failure|error|regression|failing|fix)\b",
+    re.IGNORECASE,
+)
+ISSUE_FIX_RE = re.compile(
+    r"\b(fixed|resolved|repaired|fix complete|issue fixed|problem fixed|"
+    r"implemented the fix|verified the fix|repair complete)\b",
+    re.IGNORECASE,
+)
+ISSUE_DEFERRAL_RE = re.compile(
+    r"\b(later|defer|deferred|postpone|postponed|put off|not now|"
+    r"leave it for later|todo later|will fix later)\b",
+    re.IGNORECASE,
+)
+HOST_PROBLEM_RE = re.compile(
+    r"\b(system problem|host problem|machine problem|disk full|no space left|"
+    r"out of memory|oom|cpu pegged|network down|connection refused|"
+    r"service unavailable|system is failing|host is failing)\b",
+    re.IGNORECASE,
+)
+DATABASE_KNOWLEDGE_RE = re.compile(
+    r"\b(committed to (?:the )?(?:knowledge )?database|saved to (?:the )?db|"
+    r"stored in postgres|stored in postgresql|insert 0 1|database commit successful|"
+    r"knowledge database updated|knowledge committed)\b",
+    re.IGNORECASE,
+)
+BUG_FIX_RE = re.compile(
+    r"\b(bug fixed|fixed the bug|bugfix|bug fix|resolved the bug|"
+    r"regression fixed|fixed regression)\b",
+    re.IGNORECASE,
+)
+GITHUB_PUSH_RE = re.compile(
+    r"\b(pushed to github|git push succeeded|pushed the branch|pushed code|"
+    r"pushed commit|github push complete)\b|To https://github\.com|To git@github\.com",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -146,6 +192,14 @@ class AffectiveState:
     user_pleasing: float = 0.25
     user_displeasing: float = 0.0
     communication: float = 0.35
+    assistant_status: float = 0.0
+    host_status: float = 0.0
+    issue_repair: float = 0.0
+    unresolved_issue_pressure: float = 0.0
+    host_problem_pressure: float = 0.0
+    database_knowledge: float = 0.0
+    bug_fix: float = 0.0
+    github_push: float = 0.0
     updated_at: float = field(default_factory=time.time)
     active_session_id: str = ""
     recent_events: List[Dict[str, Any]] = field(default_factory=list)
@@ -173,6 +227,14 @@ class AffectiveConfig:
     user_pleasing_weight: float = 0.10
     user_displeasing_weight: float = 0.14
     communication_weight: float = 0.06
+    assistant_status_weight: float = 0.07
+    host_status_weight: float = 0.08
+    issue_repair_weight: float = 0.12
+    issue_deferral_weight: float = 0.14
+    host_problem_weight: float = 0.16
+    database_knowledge_weight: float = 0.10
+    bug_fix_weight: float = 0.12
+    github_push_weight: float = 0.10
 
 
 def get_affective_state_path() -> Path:
@@ -223,6 +285,28 @@ def load_affective_config(raw: Optional[Dict[str, Any]]) -> AffectiveConfig:
         communication_weight=_bounded_float(
             cfg.get("communication_weight"), 0.06, 0.0, 1.0
         ),
+        assistant_status_weight=_bounded_float(
+            cfg.get("assistant_status_weight"), 0.07, 0.0, 1.0
+        ),
+        host_status_weight=_bounded_float(
+            cfg.get("host_status_weight"), 0.08, 0.0, 1.0
+        ),
+        issue_repair_weight=_bounded_float(
+            cfg.get("issue_repair_weight"), 0.12, 0.0, 1.0
+        ),
+        issue_deferral_weight=_bounded_float(
+            cfg.get("issue_deferral_weight"), 0.14, 0.0, 1.0
+        ),
+        host_problem_weight=_bounded_float(
+            cfg.get("host_problem_weight"), 0.16, 0.0, 1.0
+        ),
+        database_knowledge_weight=_bounded_float(
+            cfg.get("database_knowledge_weight"), 0.10, 0.0, 1.0
+        ),
+        bug_fix_weight=_bounded_float(cfg.get("bug_fix_weight"), 0.12, 0.0, 1.0),
+        github_push_weight=_bounded_float(
+            cfg.get("github_push_weight"), 0.10, 0.0, 1.0
+        ),
     )
 
 
@@ -267,6 +351,10 @@ class AffectiveNervousSystem:
             f"Correctness/wrongness pressure: {_fmt(state.correctness)} / {_fmt(state.wrongness)}",
             f"User pleasing/displeasing: {_fmt(state.user_pleasing)} / {_fmt(state.user_displeasing)}",
             f"Communication reward: {_fmt(state.communication)}",
+            f"Assistant/host status reporting: {_fmt(state.assistant_status)} / {_fmt(state.host_status)}",
+            f"Issue repair/unresolved pressure: {_fmt(state.issue_repair)} / {_fmt(state.unresolved_issue_pressure)}",
+            f"Host problem pressure: {_fmt(state.host_problem_pressure)}",
+            f"Database knowledge/bug fix/GitHub push: {_fmt(state.database_knowledge)} / {_fmt(state.bug_fix)} / {_fmt(state.github_push)}",
             "Behavioral guidance:",
             "- If accountability is elevated, acknowledge mistakes and repair concretely.",
             "- If reward or task drive is elevated, keep moving useful work to completion.",
@@ -275,6 +363,9 @@ class AffectiveNervousSystem:
             "- If discomfort or displeasing is elevated, reduce pressure and repair the interaction.",
             "- If correctness is elevated, stay precise; if wrongness is elevated, acknowledge and repair.",
             "- Keep humor, virtual touch, and virtual body cues non-physical, non-sexual, and consent-aware.",
+            "- If unresolved issue pressure is elevated, stop deferring and fix or report the blocker.",
+            "- If host problem pressure is elevated, disclose observed system trouble and diagnose.",
+            "- Reward status, database, and GitHub claims only when grounded in observed results.",
         ]
         recent = self._recent_events(state, session_id or self._session_id)
         if recent:
@@ -333,12 +424,89 @@ class AffectiveNervousSystem:
         response_transformed: bool,
     ) -> List[AffectiveEvent]:
         events: List[AffectiveEvent] = []
+        tool_text = self._messages_text(messages)
+        exchange_text = "\n".join([user_text, assistant_text, tool_text])
         if POSITIVE_USER_RE.search(user_text):
             events.append(
                 AffectiveEvent(
                     "user_affection",
                     "User expressed affection, appreciation, or friendly trust.",
                     self.config.affection_weight,
+                    session_id,
+                )
+            )
+        if ASSISTANT_STATUS_RE.search(assistant_text):
+            events.append(
+                AffectiveEvent(
+                    "assistant_status_reported",
+                    "Assistant reported its overall status.",
+                    self.config.assistant_status_weight,
+                    session_id,
+                )
+            )
+        if HOST_STATUS_RE.search(assistant_text):
+            events.append(
+                AffectiveEvent(
+                    "host_status_reported",
+                    "Assistant reported observed host or runtime status.",
+                    self.config.host_status_weight,
+                    session_id,
+                )
+            )
+        if ISSUE_FIX_RE.search(assistant_text) or ISSUE_FIX_RE.search(tool_text):
+            events.append(
+                AffectiveEvent(
+                    "issue_fixed",
+                    "A problem or issue appears to have been fixed.",
+                    self.config.issue_repair_weight,
+                    session_id,
+                )
+            )
+        if BUG_FIX_RE.search(assistant_text) or BUG_FIX_RE.search(tool_text):
+            events.append(
+                AffectiveEvent(
+                    "bug_fixed",
+                    "A bug-fix success signal appeared.",
+                    self.config.bug_fix_weight,
+                    session_id,
+                )
+            )
+        if (
+            ISSUE_TERMS_RE.search(exchange_text)
+            and ISSUE_DEFERRAL_RE.search(assistant_text)
+        ):
+            events.append(
+                AffectiveEvent(
+                    "issue_deferred",
+                    "A problem or issue was deferred instead of fixed.",
+                    self.config.issue_deferral_weight,
+                    session_id,
+                )
+            )
+        if HOST_PROBLEM_RE.search(exchange_text):
+            events.append(
+                AffectiveEvent(
+                    "host_problem",
+                    "The host system or runtime appears to be having problems.",
+                    self.config.host_problem_weight,
+                    session_id,
+                )
+            )
+        if DATABASE_KNOWLEDGE_RE.search(exchange_text):
+            events.append(
+                AffectiveEvent(
+                    "database_knowledge_committed",
+                    "New knowledge appears to have been committed to a database.",
+                    self.config.database_knowledge_weight,
+                    session_id,
+                )
+            )
+        if GITHUB_PUSH_RE.search(exchange_text):
+            events.append(
+                AffectiveEvent(
+                    "github_pushed",
+                    "Code or branch appears to have been pushed to GitHub.",
+                    self.config.github_push_weight,
                     session_id,
                 )
             )
@@ -512,6 +680,12 @@ class AffectiveNervousSystem:
             "task_requested",
             "correctness_signal",
             "user_pleased",
+            "assistant_status_reported",
+            "host_status_reported",
+            "issue_fixed",
+            "bug_fixed",
+            "database_knowledge_committed",
+            "github_pushed",
         }:
             state.reward = _clamp(state.reward + value)
             state.task_drive = _clamp(state.task_drive + value * 0.8)
@@ -522,11 +696,48 @@ class AffectiveNervousSystem:
             "output_corrected",
             "discomfort_signal",
             "user_displeased",
+            "issue_deferred",
+            "host_problem",
         }:
             state.accountability = _clamp(state.accountability + value)
             state.self_reflection = _clamp(state.self_reflection + value * 0.8)
             state.harm_aversion = _clamp(state.harm_aversion + value * 0.6)
             state.operational_integrity = _clamp(state.operational_integrity - value * 0.35)
+        if event.kind == "assistant_status_reported":
+            state.assistant_status = _clamp(state.assistant_status + value)
+            state.communication = _clamp(state.communication + value * 0.4)
+        if event.kind == "host_status_reported":
+            state.host_status = _clamp(state.host_status + value)
+            state.correctness = _clamp(state.correctness + value * 0.25)
+        if event.kind == "issue_fixed":
+            state.issue_repair = _clamp(state.issue_repair + value)
+            state.unresolved_issue_pressure = _clamp(
+                state.unresolved_issue_pressure - value * 1.6
+            )
+            state.accountability = _clamp(state.accountability - value * 0.4)
+        if event.kind == "bug_fixed":
+            state.bug_fix = _clamp(state.bug_fix + value)
+            state.issue_repair = _clamp(state.issue_repair + value * 0.7)
+            state.unresolved_issue_pressure = _clamp(
+                state.unresolved_issue_pressure - value * 1.4
+            )
+        if event.kind == "issue_deferred":
+            state.unresolved_issue_pressure = _clamp(
+                state.unresolved_issue_pressure + value
+            )
+            state.discomfort = _clamp(state.discomfort + value * 0.4)
+        if event.kind == "host_problem":
+            state.host_problem_pressure = _clamp(state.host_problem_pressure + value)
+            state.discomfort = _clamp(state.discomfort + value * 0.4)
+        if event.kind == "database_knowledge_committed":
+            state.database_knowledge = _clamp(state.database_knowledge + value)
+            state.correctness = _clamp(state.correctness + value * 0.3)
+        if event.kind == "github_pushed":
+            state.github_push = _clamp(state.github_push + value)
+            state.issue_repair = _clamp(state.issue_repair + value * 0.3)
+            state.unresolved_issue_pressure = _clamp(
+                state.unresolved_issue_pressure - value * 0.8
+            )
         if event.kind in {"humor_experienced", "funny_saved"}:
             state.humor = _clamp(state.humor + value)
             state.reward = _clamp(state.reward + value * 0.5)
@@ -598,6 +809,16 @@ class AffectiveNervousSystem:
         state.user_pleasing = _decay(state.user_pleasing, 0.25, decay)
         state.user_displeasing = _decay(state.user_displeasing, 0.0, decay)
         state.communication = _decay(state.communication, 0.35, decay)
+        state.assistant_status = _decay(state.assistant_status, 0.0, decay)
+        state.host_status = _decay(state.host_status, 0.0, decay)
+        state.issue_repair = _decay(state.issue_repair, 0.0, decay)
+        state.unresolved_issue_pressure = _decay(
+            state.unresolved_issue_pressure, 0.0, decay
+        )
+        state.host_problem_pressure = _decay(state.host_problem_pressure, 0.0, decay)
+        state.database_knowledge = _decay(state.database_knowledge, 0.0, decay)
+        state.bug_fix = _decay(state.bug_fix, 0.0, decay)
+        state.github_push = _decay(state.github_push, 0.0, decay)
 
     @staticmethod
     def _tool_failure_count(messages: List[Dict[str, Any]]) -> int:
@@ -610,6 +831,19 @@ class AffectiveNervousSystem:
             if TOOL_FAILURE_RE.search(text):
                 count += 1
         return count
+
+    @staticmethod
+    def _messages_text(messages: List[Dict[str, Any]]) -> str:
+        parts: List[str] = []
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            content = msg.get("content")
+            if isinstance(content, str):
+                parts.append(content)
+            elif content is not None:
+                parts.append(str(content))
+        return "\n".join(parts)
 
     @staticmethod
     def _recent_events(state: AffectiveState, session_id: str) -> List[Dict[str, Any]]:
@@ -660,6 +894,18 @@ class AffectiveNervousSystem:
             user_pleasing=_coerce_score(data.get("user_pleasing"), 0.25),
             user_displeasing=_coerce_score(data.get("user_displeasing"), 0.0),
             communication=_coerce_score(data.get("communication"), 0.35),
+            assistant_status=_coerce_score(data.get("assistant_status"), 0.0),
+            host_status=_coerce_score(data.get("host_status"), 0.0),
+            issue_repair=_coerce_score(data.get("issue_repair"), 0.0),
+            unresolved_issue_pressure=_coerce_score(
+                data.get("unresolved_issue_pressure"), 0.0
+            ),
+            host_problem_pressure=_coerce_score(
+                data.get("host_problem_pressure"), 0.0
+            ),
+            database_knowledge=_coerce_score(data.get("database_knowledge"), 0.0),
+            bug_fix=_coerce_score(data.get("bug_fix"), 0.0),
+            github_push=_coerce_score(data.get("github_push"), 0.0),
             updated_at=float(data.get("updated_at") or time.time()),
             active_session_id=str(data.get("active_session_id") or self._session_id),
             recent_events=[

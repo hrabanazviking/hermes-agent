@@ -1221,6 +1221,14 @@ DEFAULT_CONFIG = {
         "user_pleasing_weight": 0.10,
         "user_displeasing_weight": 0.14,
         "communication_weight": 0.06,
+        "assistant_status_weight": 0.07,
+        "host_status_weight": 0.08,
+        "issue_repair_weight": 0.12,
+        "issue_deferral_weight": 0.14,
+        "host_problem_weight": 0.16,
+        "database_knowledge_weight": 0.10,
+        "bug_fix_weight": 0.12,
+        "github_push_weight": 0.10,
     },
 
     # Persistent memory -- bounded curated memory injected into system prompt

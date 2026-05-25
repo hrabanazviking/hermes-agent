@@ -233,3 +233,17 @@ Planned implementation:
 - Add tests for status reporting, host status reporting, issue deferral
   accumulation/reduction, host-system problems, database knowledge commits,
   bug fixes, GitHub pushes, config loading, and bounded scores.
+
+Third-slice status:
+
+- Implemented schema version 4 with added gauges for assistant status, host
+  status, issue repair, unresolved issue pressure, host problem pressure,
+  database knowledge, bug fixes, and GitHub pushes.
+- Added deterministic recognizers for status summaries, host/runtime status,
+  issue fixes, issue deferrals, host-system trouble, database knowledge commit
+  signals, bug fixes, and GitHub push success signals.
+- Deferred issue pressure now accumulates on repeated deferral and is reduced
+  by issue-fix, bug-fix, and GitHub-push signals.
+- Added config weights and example config entries for all new channels.
+- Added tests for every requested channel plus bounded scores and regression
+  coverage for config/memory context behavior.
