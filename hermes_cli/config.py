@@ -611,6 +611,21 @@ DEFAULT_CONFIG = {
         # provider hiccups on a single provider.
         "api_max_retries": 3,
         "service_tier": "",
+        # Personal-fork large-context defaults. These do not rename the model
+        # config surface; they only provide fallback caps when model.max_tokens
+        # / model.context_length are unset.
+        "default_max_tokens": 65536,
+        "default_context_length": 262144,
+        "max_continuation_tokens": 131072,
+        "output_language": {
+            "mode": "auto",      # off | auto | display | fixed
+            "language": "",      # used when mode=fixed, e.g. "ja", "zh-hant"
+            "strict": True,
+        },
+        # SillyTavern/chat-app-style typed prompt sections. Durable persona
+        # sections use insertion="identity_after"; chat/session context uses
+        # insertion="context"; temporary overlays use insertion="ephemeral".
+        "prompt_sections": [],
         # Tool-use enforcement: injects system prompt guidance that tells the
         # model to actually call tools instead of describing intended actions.
         # Values: "auto" (default — applies to gpt/codex models), true/false
@@ -1376,19 +1391,19 @@ DEFAULT_CONFIG = {
         # extras" without silently stripping MCP tools the parent already has.
         # Set to false for strict intersection.
         "inherit_mcp_toolsets": True,
-        "max_iterations": 50,  # per-subagent iteration cap (each subagent gets its own budget,
+        "max_iterations": 90,  # per-subagent iteration cap (each subagent gets its own budget,
                                # independent of the parent's max_iterations)
-        "child_timeout_seconds": 600,  # wall-clock timeout for each child agent (floor 30s,
+        "child_timeout_seconds": 1800,  # wall-clock timeout for each child agent (floor 30s,
                                        # no ceiling). High-reasoning models on large tasks
                                        # (e.g. gpt-5.5 xhigh, opus-4.6) need generous budgets;
                                        # raise if children time out before producing output.
         "reasoning_effort": "",  # reasoning effort for subagents: "xhigh", "high", "medium",
                                  # "low", "minimal", "none" (empty = inherit parent's level)
-        "max_concurrent_children": 3,  # max parallel children per batch; floor of 1 enforced, no ceiling
+        "max_concurrent_children": 6,  # max parallel children per batch; floor of 1 enforced, no ceiling
         # Orchestrator role controls (see tools/delegate_tool.py:_get_max_spawn_depth
         # and _get_orchestrator_enabled).  Values are clamped to [1, 3] with a
         # warning log if out of range.
-        "max_spawn_depth": 1,        # depth cap (1 = flat [default], 2 = orchestrator→leaf, 3 = three-level)
+        "max_spawn_depth": 2,        # depth cap (1 = flat, 2 = orchestrator→leaf [personal fork default], 3 = three-level)
         "orchestrator_enabled": True,  # kill switch for role="orchestrator"
         # When a subagent hits a dangerous-command approval prompt, the parent's
         # prompt_toolkit TUI owns stdin — a thread-local input() call from the

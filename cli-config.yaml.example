@@ -47,6 +47,13 @@ model:
   base_url: "https://openrouter.ai/api/v1"
 
   # Azure Foundry keyless auth example:
+  # Hrafnvíkingr personal-fork large-context defaults. Override per model
+  # if your provider supports larger windows/output; lower these for small
+  # cloud models or local GPUs that cannot sustain the allocation.
+  # context_length: 262144
+  # max_tokens: 65536
+  # max_continuation_tokens: 131072
+
   # provider: "azure-foundry"
   # base_url: "https://<resource>.openai.azure.com/openai/v1"
   # auth_mode: "entra_id"      # DefaultAzureCredential: az login, managed identity, workload identity, etc.
@@ -462,6 +469,8 @@ prompt_caching:
 # =============================================================================
 # Affective Nervous System
 # =============================================================================
+# Hrafnvíkingr personal-fork note: this section is one of the core local
+# experimental surfaces. Keep it opt-in and bounded.
 # Optional synthetic affective regulation: local deterministic reward,
 # accountability, rapport, self-reflection, and operational-integrity signals.
 # These are simulated control signals, not real feelings or consciousness.
@@ -636,8 +645,33 @@ skills:
 agent:
   # Maximum tool-calling iterations per conversation
   # Higher = more room for complex tasks, but costs more tokens
-  # Recommended: 20-30 for focused tasks, 50-100 for open exploration
-  max_turns: 60
+  # Recommended: 20-30 for focused tasks, 50-100 for open exploration,
+  # 120+ for personal-fork coding raids with robust verification.
+  max_turns: 90
+
+  # Personal-fork fallback caps used when model.max_tokens/context_length are unset.
+  # default_max_tokens: 65536
+  # default_context_length: 262144
+  # max_continuation_tokens: 131072
+
+  # Strict output-language policy: off | auto | display | fixed.
+  output_language:
+    mode: auto
+    language: ""
+    strict: true
+
+  # SillyTavern/chat-app-style typed prompt sections.
+  # prompt_sections:
+  #   - type: character_description
+  #     insertion: identity_after
+  #     order: 10
+  #     content: |
+  #       Describe the durable persona here.
+  #   - type: scenario
+  #     insertion: context
+  #     order: 20
+  #     content: |
+  #       Describe the current scenario/world/chat context here.
 
   # Inactivity timeout for gateway agent runs (seconds, 0 = unlimited).
   # The agent can run indefinitely when actively calling tools or receiving

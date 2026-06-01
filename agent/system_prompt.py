@@ -97,6 +97,16 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
         # Fallback to hardcoded identity
         stable_parts.append(DEFAULT_AGENT_IDENTITY)
 
+    try:
+        from agent.prompt_sections import render_prompt_sections
+        _identity_sections = render_prompt_sections(
+            getattr(agent, "_prompt_sections", []), "identity_after"
+        )
+        if _identity_sections:
+            stable_parts.append(_identity_sections)
+    except Exception:
+        pass
+
     # Pointer to the hermes-agent skill + docs for user questions about Hermes itself.
     stable_parts.append(HERMES_AGENT_HELP_GUIDANCE)
 
@@ -259,6 +269,16 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
     # API-call time only so it stays out of the cached/stored system prompt.
     if system_message is not None:
         context_parts.append(system_message)
+
+    try:
+        from agent.prompt_sections import render_prompt_sections
+        _context_sections = render_prompt_sections(
+            getattr(agent, "_prompt_sections", []), "context"
+        )
+        if _context_sections:
+            context_parts.append(_context_sections)
+    except Exception:
+        pass
 
     if not agent.skip_context_files:
         # Use TERMINAL_CWD for context file discovery when set (gateway
