@@ -1149,6 +1149,16 @@ def handle_max_iterations(agent, messages: list, api_call_count: int) -> str:
         effective_system = agent._cached_system_prompt or ""
         if agent.ephemeral_system_prompt:
             effective_system = (effective_system + "\n\n" + agent.ephemeral_system_prompt).strip()
+        try:
+            from agent.output_language import build_output_language_system_block
+            _language_block = build_output_language_system_block(
+                getattr(agent, "_output_language_policy", None),
+                display_language=getattr(agent, "_display_language", None),
+            )
+            if _language_block:
+                effective_system = (effective_system + "\n\n" + _language_block).strip()
+        except Exception:
+            pass
         if effective_system:
             api_messages = [{"role": "system", "content": effective_system}] + api_messages
         if agent.prefill_messages:

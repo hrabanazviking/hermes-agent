@@ -894,6 +894,16 @@ def run_conversation(
         effective_system = active_system_prompt or ""
         if agent.ephemeral_system_prompt:
             effective_system = (effective_system + "\n\n" + agent.ephemeral_system_prompt).strip()
+        try:
+            from agent.output_language import build_output_language_system_block
+            _language_block = build_output_language_system_block(
+                getattr(agent, "_output_language_policy", None),
+                display_language=getattr(agent, "_display_language", None),
+            )
+            if _language_block:
+                effective_system = (effective_system + "\n\n" + _language_block).strip()
+        except Exception:
+            pass
         if effective_system:
             api_messages = [{"role": "system", "content": effective_system}] + api_messages
 
@@ -3109,7 +3119,11 @@ def run_conversation(
             # Applies to all providers via _ephemeral_max_output_tokens.
             _boost_base = agent.max_tokens if agent.max_tokens else 4096
             _boost = _boost_base * (length_continue_retries + 1)
-            agent._ephemeral_max_output_tokens = min(_boost, 32768)
+            try:
+                _continuation_cap = int(getattr(agent, "_max_continuation_tokens", 131072) or 131072)
+            except (TypeError, ValueError):
+                _continuation_cap = 131072
+            agent._ephemeral_max_output_tokens = min(_boost, max(32768, _continuation_cap))
             continue
 
         # Guard: if all retries exhausted without a successful response
@@ -4153,6 +4167,14 @@ def run_conversation(
                     final_response = final_response.rstrip() + "\n\n" + footer
         except Exception as _ver_err:
             logger.debug("file-mutation verifier footer failed: %s", _ver_err)
+
+    try:
+        from agent.output_language import localize_programmatic_footer
+        final_response = localize_programmatic_footer(
+            final_response, getattr(agent, "_output_language_policy", None)
+        )
+    except Exception:
+        pass
 
     _response_transformed = False
 

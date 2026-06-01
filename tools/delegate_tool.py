@@ -129,8 +129,8 @@ _SUBAGENT_TOOLSETS = sorted(
 )
 _TOOLSET_LIST_STR = ", ".join(f"'{n}'" for n in _SUBAGENT_TOOLSETS)
 
-_DEFAULT_MAX_CONCURRENT_CHILDREN = 3
-MAX_DEPTH = 1  # flat by default: parent (0) -> child (1); grandchild rejected unless max_spawn_depth raised.
+_DEFAULT_MAX_CONCURRENT_CHILDREN = 6
+MAX_DEPTH = 2  # personal-fork default: parent -> orchestrator-capable children -> leaf grandchildren.
 # Configurable depth cap consulted by _get_max_spawn_depth; MAX_DEPTH
 # stays as the default fallback and is still the symbol tests import.
 _MIN_SPAWN_DEPTH = 1
@@ -509,8 +509,8 @@ def _preserve_parent_mcp_toolsets(
     return preserved
 
 
-DEFAULT_MAX_ITERATIONS = 50
-DEFAULT_CHILD_TIMEOUT = 600  # seconds before a child agent is considered stuck
+DEFAULT_MAX_ITERATIONS = 90
+DEFAULT_CHILD_TIMEOUT = 1800  # seconds before a child agent is considered stuck
 _HEARTBEAT_INTERVAL = 30  # seconds between parent activity heartbeats during delegation
 # Stale-heartbeat thresholds. A child with no API-call progress is either:
 #   - idle between turns (no current_tool) — probably stuck on a slow API call
@@ -574,6 +574,7 @@ def _build_child_system_prompt(
     role: str = "leaf",
     max_spawn_depth: int = 2,
     child_depth: int = 1,
+    output_language_instruction: Optional[str] = None,
 ) -> str:
     """Build a focused system prompt for a child agent.
 
@@ -606,8 +607,16 @@ def _build_child_system_prompt(
         "Important workspace rule: Never assume a repository lives at /workspace/... or any other container-style path unless the task/context explicitly gives that path. "
         "If no exact local path is provided, discover it first before issuing git/workdir-specific commands.\n\n"
         "Be thorough but concise -- your response is returned to the "
-        "parent agent as a summary."
+        "parent agent as a summary.\n\n"
+        "ROBUST CODING-AGENT OPERATING RULES:\n"
+        "- Prefer bounded commands with explicit timeouts or naturally short output.\n"
+        "- Avoid long-running commands with no progress output; if blocked, return partial findings.\n"
+        "- Keep exploration focused on the delegated task and named paths.\n"
+        "- Dangerous command approvals are non-interactive for subagents and may be auto-denied; choose safer alternatives.\n"
+        "- Report uncertainty, blockers, exact files touched, and verification commands."
     )
+    if output_language_instruction and output_language_instruction.strip():
+        parts.append(output_language_instruction.strip())
     if role == "orchestrator":
         child_note = (
             "Your own children MUST be leaves (cannot delegate further) "
@@ -968,6 +977,15 @@ def _build_child_agent(
         child_toolsets.append("delegation")
 
     workspace_hint = _resolve_workspace_hint(parent_agent)
+    try:
+        from agent.output_language import build_output_language_system_block
+        output_language_instruction = build_output_language_system_block(
+            getattr(parent_agent, "_output_language_policy", None),
+            display_language=getattr(parent_agent, "_display_language", None),
+        )
+    except Exception:
+        output_language_instruction = ""
+
     child_prompt = _build_child_system_prompt(
         goal,
         context,
@@ -975,6 +993,7 @@ def _build_child_agent(
         role=effective_role,
         max_spawn_depth=max_spawn,
         child_depth=child_depth,
+        output_language_instruction=output_language_instruction,
     )
     # Extract parent's API key so subagents inherit auth (e.g. Nous Portal).
     parent_api_key = getattr(parent_agent, "api_key", None)
@@ -1306,10 +1325,10 @@ def _dump_subagent_timeout_diagnostic(
         _w("")
 
         _w("## Notes")
-        _w("  This file is written ONLY when a subagent times out with 0 API calls.")
+        _w("  This file is written for every subagent timeout in this personal fork.")
         _w("  0-API-call timeouts mean the child never reached its first LLM request.")
-        _w("  Common causes: oversized prompt rejected by provider, transport hang,")
-        _w("  credential resolution stuck. See issue #14726 for context.")
+        _w("  Nonzero-call timeouts usually indicate a slow API call, hung tool,")
+        _w("  provider stall, transport hang, or task that exceeded its wall budget.")
 
         dump_path.write_text("\n".join(lines), encoding="utf-8")
         return str(dump_path)
@@ -1467,6 +1486,12 @@ def _run_single_child(
 
     try:
         _heartbeat_thread.start()
+        try:
+            touch = getattr(parent_agent, "_touch_activity", None)
+            if touch:
+                touch(f"delegate_task: subagent {task_index} started")
+        except Exception:
+            pass
         if child_progress_cb:
             try:
                 child_progress_cb("subagent.start", preview=goal)
@@ -1541,7 +1566,7 @@ def _run_single_child(
                 child_api_calls = int(_summary.get("api_call_count", 0) or 0)
             except Exception:
                 pass
-            if is_timeout and child_api_calls == 0:
+            if is_timeout:
                 diagnostic_path = _dump_subagent_timeout_diagnostic(
                     child=child,
                     task_index=task_index,
@@ -1552,7 +1577,7 @@ def _run_single_child(
                 )
                 if diagnostic_path:
                     logger.warning(
-                        "Subagent %d 0-API-call timeout — diagnostic written to %s",
+                        "Subagent %d timeout diagnostic written to %s",
                         task_index,
                         diagnostic_path,
                     )
@@ -1574,6 +1599,12 @@ def _run_single_child(
                     pass
 
             if is_timeout:
+                try:
+                    close = getattr(child, "close", None)
+                    if callable(close):
+                        close()
+                except Exception:
+                    pass
                 if child_api_calls == 0:
                     _err = (
                         f"Subagent timed out after {child_timeout}s without "
@@ -2473,9 +2504,9 @@ def _load_config() -> dict:
     except Exception:
         pass
     try:
-        from hermes_cli.config import load_config
+        from hermes_cli.config import load_config_readonly
 
-        full = load_config()
+        full = load_config_readonly()
         return full.get("delegation") or {}
     except Exception:
         return {}

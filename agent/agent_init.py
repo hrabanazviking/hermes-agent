@@ -1042,6 +1042,25 @@ def init_agent(
     except Exception:
         _agent_cfg = {}
     try:
+        from agent.output_language import load_output_language_policy
+        from agent.prompt_sections import normalize_prompt_sections
+
+        agent._output_language_policy = load_output_language_policy(_agent_cfg)
+        agent._display_language = ((_agent_cfg.get("display", {}) or {}).get("language") or "en")
+        agent._prompt_sections = normalize_prompt_sections(
+            (_agent_cfg.get("agent", {}) or {}).get("prompt_sections")
+        )
+        from agent.prompt_sections import render_prompt_sections
+        _ephemeral_sections = render_prompt_sections(agent._prompt_sections, "ephemeral")
+        if _ephemeral_sections:
+            agent.ephemeral_system_prompt = (
+                (agent.ephemeral_system_prompt or "") + "\n\n" + _ephemeral_sections
+            ).strip()
+    except Exception:
+        agent._output_language_policy = None
+        agent._prompt_sections = []
+
+    try:
         agent._tool_guardrails = ToolCallGuardrailController(
             ToolCallGuardrailConfig.from_mapping(
                 _agent_cfg.get("tool_loop_guardrails", {})
@@ -1209,6 +1228,12 @@ def init_agent(
     if not isinstance(_agent_section, dict):
         _agent_section = {}
     agent._tool_use_enforcement = _agent_section.get("tool_use_enforcement", "auto")
+    try:
+        agent._max_continuation_tokens = int(
+            _agent_section.get("max_continuation_tokens", 131072)
+        )
+    except (TypeError, ValueError):
+        agent._max_continuation_tokens = 131072
 
     # App-level API retry count (wraps each model API call).  Default 3,
     # overridable via agent.api_max_retries in config.yaml.  See #11616.
@@ -1269,10 +1294,16 @@ def init_agent(
     agent._aux_compression_context_length_config = _aux_context_config
 
     # Read explicit model output-token override from config when the
-    # caller did not pass one directly.
+    # caller did not pass one directly.  In this personal fork,
+    # agent.default_max_tokens applies even when model config is still the
+    # legacy scalar string shape.
     _model_cfg = _agent_cfg.get("model", {})
-    if agent.max_tokens is None and isinstance(_model_cfg, dict):
-        _config_max_tokens = _model_cfg.get("max_tokens")
+    if agent.max_tokens is None:
+        _config_max_tokens = (
+            _model_cfg.get("max_tokens") if isinstance(_model_cfg, dict) else None
+        )
+        if _config_max_tokens is None:
+            _config_max_tokens = _agent_section.get("default_max_tokens")
         if _config_max_tokens is not None:
             try:
                 if isinstance(_config_max_tokens, bool):
@@ -1283,13 +1314,13 @@ def init_agent(
                 agent.max_tokens = _parsed_max_tokens
             except (TypeError, ValueError):
                 _ra().logger.warning(
-                    "Invalid model.max_tokens in config.yaml: %r — "
+                    "Invalid model.max_tokens/default_max_tokens in config.yaml: %r — "
                     "must be a positive integer (e.g. 4096). "
                     "Falling back to provider default.",
                     _config_max_tokens,
                 )
                 print(
-                    f"\n⚠ Invalid model.max_tokens in config.yaml: {_config_max_tokens!r}\n"
+                    f"\n⚠ Invalid model.max_tokens/default_max_tokens in config.yaml: {_config_max_tokens!r}\n"
                     f"  Must be a positive integer (e.g. 4096).\n"
                     f"  Falling back to provider default.\n",
                     file=sys.stderr,
@@ -1301,6 +1332,8 @@ def init_agent(
         _config_context_length = _model_cfg.get("context_length")
     else:
         _config_context_length = None
+    if _config_context_length is None:
+        _config_context_length = _agent_section.get("default_context_length")
     if _config_context_length is not None:
         try:
             _config_context_length = int(_config_context_length)

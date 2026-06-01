@@ -118,6 +118,34 @@ def _normalize_lang(value: Any) -> str:
     return DEFAULT_LANGUAGE
 
 
+def normalize_language(value: Any) -> str:
+    """Public wrapper for normalizing user/config language values."""
+    return _normalize_lang(value)
+
+
+def language_display_name(code: Any) -> str:
+    """Return a human-readable language name for a normalized code."""
+    normalized = _normalize_lang(code)
+    return {
+        "en": "English",
+        "zh": "Simplified Chinese",
+        "zh-hant": "Traditional Chinese",
+        "ja": "Japanese",
+        "de": "German",
+        "es": "Spanish",
+        "fr": "French",
+        "tr": "Turkish",
+        "uk": "Ukrainian",
+        "af": "Afrikaans",
+        "ko": "Korean",
+        "it": "Italian",
+        "ga": "Irish",
+        "pt": "Portuguese",
+        "ru": "Russian",
+        "hu": "Hungarian",
+    }.get(normalized, normalized)
+
+
 def _load_catalog(lang: str) -> dict[str, str]:
     """Load and flatten one locale YAML file into a dotted-key dict.
 
